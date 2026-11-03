@@ -1,4 +1,7 @@
 export interface Config {
+  auth: {
+    token: string;
+  };
   llm: {
     baseUrl: string;
     apiKey: string;
@@ -43,6 +46,9 @@ function intEnv(name: string, fallback: number): number {
 
 export function loadConfig(overrides: Partial<Config> = {}): Config {
   const cfg: Config = {
+    auth: {
+      token: env('SPARKSLEUTH_TOKEN', ''),
+    },
     llm: {
       baseUrl: env('SPARKSLEUTH_LLM_BASE_URL', 'https://api.anthropic.com').replace(/\/+$/, ''),
       apiKey: env('SPARKSLEUTH_LLM_API_KEY', ''),

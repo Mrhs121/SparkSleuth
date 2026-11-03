@@ -166,7 +166,7 @@ export class Agent {
       result = {
         ...result,
         artifact: result.artifact ?? stored.id,
-        summary: `${truncate(result.summary, max)}\n\n[Full result saved as artifact ${stored.id}. Use core_artifact_query to read specific parts.]`,
+        summary: `${truncate(result.summary, max)}\n\n[Full result saved as artifact ${stored.id}. Use core_artifact_head to inspect structure/keys or core_artifact_query to read specific parts.]`,
       };
     }
     return result;

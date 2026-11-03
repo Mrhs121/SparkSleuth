@@ -1,9 +1,33 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
 import type { Skill, ToolDefinition } from '../types.js';
 
 export interface SessionHooks {
   markPurpose(payload: { type: string; target?: string; desc: string }): Promise<void>;
   reportFinding(payload: { stage: string; tools: string[]; finding: string }): Promise<void>;
   saveReport(payload: { title: string; markdown: string }): Promise<{ path: string }>;
+}
+
+export function resolveSessionWorkspace(dataDir: string, sessionId: string): string {
+  return resolve(dataDir, 'workspaces', sessionId);
+}
+
+export async function initSessionWorkspace(workspaceDir: string): Promise<void> {
+  await mkdir(join(workspaceDir, 'reports'), { recursive: true });
+  await mkdir(join(workspaceDir, 'artifacts'), { recursive: true });
+}
+
+export async function writeSessionReport(
+  workspaceDir: string,
+  title: string,
+  markdown: string,
+): Promise<{ path: string }> {
+  const reportsDir = join(workspaceDir, 'reports');
+  await mkdir(reportsDir, { recursive: true });
+  const path = join(reportsDir, `report-${Date.now()}.md`);
+  const body = markdown.replace(/^\s*#\s+.*\n+/, '');
+  await writeFile(path, `# ${title}\n\n${body}\n`, 'utf8');
+  return { path };
 }
 
 /**
@@ -21,7 +45,7 @@ export function createSessionSkill(hooks: SessionHooks): Skill {
         properties: {
           type: {
             type: 'string',
-            enum: ['single_app', 'etl_optimize', 'lineage', 'log_analysis', 'other'],
+            enum: ['single_app', 'etl_optimize', 'lineage', 'log_analysis', 'ab_compare', 'other'],
             description: 'Investigation type',
           },
           target: { type: 'string', description: 'Target application id or object being investigated' },

@@ -77,7 +77,6 @@ export function scheduleDream(hour: number, task: () => Promise<unknown>): NodeJ
       } catch (err) {
         console.error('[dream] failed:', err instanceof Error ? err.message : err);
       }
-      timer.refresh();
       scheduleNext();
     }, delay);
     timer.unref?.();

@@ -111,13 +111,47 @@ export class ToolRegistry {
       {
         skill: 'core',
         def: {
-          name: 'artifact_query',
+          name: 'artifact_head',
           description:
-            'Query a large result that was written to an artifact instead of being pasted into the conversation. Use filter/sortBy/top/fields to pull only what you need.',
+            'Inspect the structure, keys, sample items, and size of a saved artifact. If id is omitted, lists all artifacts in this session.',
           inputSchema: {
             type: 'object',
             properties: {
-              id: { type: 'string', description: 'Artifact id from a previous tool result' },
+              id: { type: 'string', description: 'Artifact id from a tool result. If omitted, lists available artifacts.' },
+            },
+          },
+          execute: async (input, ctx) => {
+            if (!input.id) {
+              const list = await ctx.artifacts.list();
+              return {
+                summary: list.length
+                  ? `Available artifacts (${list.length}):\n${list.map((a) => `- ${a.id} (${a.bytes} bytes)`).join('\n')}`
+                  : 'No artifacts saved for this session.',
+              };
+            }
+            try {
+              const summary = await ctx.artifacts.inspect(String(input.id));
+              return { summary };
+            } catch (err) {
+              const list = await ctx.artifacts.list();
+              return {
+                summary: `Could not inspect artifact "${input.id}": ${err instanceof Error ? err.message : err}\nAvailable artifacts:\n${list.map((a) => `- ${a.id} (${a.bytes} bytes)`).join('\n')}`,
+                isError: true,
+              };
+            }
+          },
+        },
+      },
+      {
+        skill: 'core',
+        def: {
+          name: 'artifact_query',
+          description:
+            'Query a large result that was written to an artifact instead of being pasted into the conversation. Use filter/sortBy/top/fields to pull only what you need. If id is omitted, lists available artifacts.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              id: { type: 'string', description: 'Artifact id from a previous tool result. If omitted, lists available artifacts.' },
               path: { type: 'string', description: 'Dot path into the JSON, e.g. tasks or 0.metrics' },
               filter: { type: 'object', description: 'Keep array items matching these field values' },
               sortBy: { type: 'string', description: 'Field to sort by' },
@@ -126,19 +160,35 @@ export class ToolRegistry {
               offset: { type: 'number' },
               fields: { type: 'array', items: { type: 'string' }, description: 'Project these fields' },
             },
-            required: ['id'],
           },
           execute: async (input, ctx) => {
-            const text = await ctx.artifacts.query(String(input.id), {
-              path: input.path as string | undefined,
-              filter: input.filter as Record<string, string | number | boolean> | undefined,
-              sortBy: input.sortBy as string | undefined,
-              order: input.order as 'asc' | 'desc' | undefined,
-              top: input.top as number | undefined,
-              offset: input.offset as number | undefined,
-              fields: input.fields as string[] | undefined,
-            });
-            return { summary: text };
+            if (!input.id) {
+              const list = await ctx.artifacts.list();
+              return {
+                summary: list.length
+                  ? `Missing "id". Available artifacts (${list.length}):\n${list.map((a) => `- ${a.id} (${a.bytes} bytes)`).join('\n')}`
+                  : 'Missing "id", and no artifacts exist for this session.',
+                isError: true,
+              };
+            }
+            try {
+              const text = await ctx.artifacts.query(String(input.id), {
+                path: input.path as string | undefined,
+                filter: input.filter as Record<string, string | number | boolean> | undefined,
+                sortBy: input.sortBy as string | undefined,
+                order: input.order as 'asc' | 'desc' | undefined,
+                top: input.top as number | undefined,
+                offset: input.offset as number | undefined,
+                fields: input.fields as string[] | undefined,
+              });
+              return { summary: text };
+            } catch (err) {
+              const list = await ctx.artifacts.list();
+              return {
+                summary: `Failed to query artifact "${input.id}": ${err instanceof Error ? err.message : err}\nAvailable artifacts:\n${list.map((a) => `- ${a.id} (${a.bytes} bytes)`).join('\n')}`,
+                isError: true,
+              };
+            }
           },
         },
       },

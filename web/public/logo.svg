@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 180" width="100%" height="100%">
+  <defs>
+    <!-- 品牌渐变色定义 -->
+    <linearGradient id="sparkOrange" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF6B00" />
+      <stop offset="100%" stop-color="#E25500" />
+    </linearGradient>
+    <linearGradient id="diagBlue" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1A365D" />
+      <stop offset="100%" stop-color="#0F2341" />
+    </linearGradient>
+  </defs>
+
+  <!-- 图标主体区域 -->
+  <g transform="translate(20, 15)">
+    <!-- 1. Spark 经典火花/星芒元素 (融合在右上角) -->
+    <path d="M102 38 L112 18 L124 36 L145 32 L134 50 L148 64 L127 65" fill="none" stroke="url(#sparkOrange)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+    
+    <!-- 2. 诊断外环 (橙色弧光) -->
+    <path d="M 52 48 A 52 52 0 1 0 128 118" fill="none" stroke="url(#sparkOrange)" stroke-width="7" stroke-linecap="round" />
+
+    <!-- 3. 根因探查放大镜 (深蓝科技色) -->
+    <!-- 镜片主圆环 -->
+    <circle cx="85" cy="85" r="38" fill="none" stroke="url(#diagBlue)" stroke-width="8" />
+    <!-- 手柄 -->
+    <path d="M112 112 L138 138" fill="none" stroke="url(#diagBlue)" stroke-width="10" stroke-linecap="round" />
+
+    <!-- 4. 性能波动/心电脉冲折线 (横穿探针) -->
+    <path d="M 22 85 L 60 85 L 72 60 L 84 110 L 96 74 L 105 85 L 140 85" fill="none" stroke="url(#diagBlue)" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" />
+  </g>
+
+  <!-- 纯英文极简文字区域 -->
+  <g transform="translate(195, 0)">
+    <!-- 核心品牌字: Spark -->
+    <text x="0" y="98" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, sans-serif" font-size="68" font-weight="900" font-style="italic" fill="url(#sparkOrange)" letter-spacing="-1.5">Spark</text>
+    
+    <!-- 副标题: 性能与根因诊断 -->
+    <text x="3" y="132" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, sans-serif" font-size="14" font-weight="700" fill="#1A365D" letter-spacing="3.5">PERFORMANCE & DIAGNOSIS</text>
+  </g>
+</svg>

@@ -284,13 +284,14 @@ const smjBroadcastable: Rule = {
   description: 'A sort-merge join has a side small enough to broadcast',
   evaluate(facts) {
     const out: Finding[] = [];
-    const threshold = Number.parseInt(facts.config['spark.sql.autoBroadcastJoinThreshold'] ?? '10485760', 10) || 10 * MB;
+    const parsed = Number.parseInt(facts.config['spark.sql.autoBroadcastJoinThreshold'] ?? '', 10);
+    const threshold = parsed > 0 ? parsed : 10 * MB;
     for (const sql of facts.sql) {
       const smj = sql.nodes.filter((n) => /SortMergeJoin/i.test(n.name));
       if (!smj.length) continue;
       const scans = sql.nodes
         .filter((n) => isScanNode(n.name))
-        .map((n) => n.metrics['size of files'] ?? n.metrics['data size'] ?? 0)
+        .map((n) => getMetric(n, ['size of files read', 'size of files', 'data size']) ?? 0)
         .filter((n) => n > 0);
       if (!scans.length) continue;
       const smallest = Math.min(...scans);

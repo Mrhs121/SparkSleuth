@@ -17,15 +17,45 @@ const config = loadConfig();
 const db = new Db(resolve(config.runtime.dataDir, 'sparksleuth.db'));
 const memory = new MemoryStoreImpl(resolve(config.runtime.dataDir, 'memory'), db);
 const manager = new SessionManager(config, db, memory);
-const llm = new LLMClient(config.llm);
+let llm = new LLMClient(config.llm);
 
 await memory.init();
 
 const app = Fastify({ logger: { level: process.env.SPARKSLEUTH_LOG_LEVEL ?? 'info' } });
 await app.register(fastifyWebsocket);
 
+app.addHook('onRequest', async (req, reply) => {
+  if (!config.auth.token) {
+    return;
+  }
+  // Only guard /api and /ws endpoints
+  if (!req.url.startsWith('/api') && !req.url.startsWith('/ws')) {
+    return;
+  }
+  // Allow /api/health so discovery and authRequired status can be inspected
+  if (req.url === '/api/health' || req.url.startsWith('/api/health?')) {
+    return;
+  }
+
+  const authHeader = req.headers.authorization;
+  const tokenHeader = req.headers['x-sparksleuth-token'];
+  const queryToken = (req.query as Record<string, string> | undefined)?.token;
+  let provided = '';
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    provided = authHeader.slice(7).trim();
+  } else if (typeof tokenHeader === 'string') {
+    provided = tokenHeader.trim();
+  } else if (typeof queryToken === 'string') {
+    provided = queryToken.trim();
+  }
+
+  if (provided !== config.auth.token) {
+    return reply.code(401).send({ error: 'unauthorized: valid token required' });
+  }
+});
+
 /* ------------------------------------------------------------------ *
- * Health and discovery
+ * Health and configuration
  * ------------------------------------------------------------------ */
 
 app.get('/api/health', async () => {
@@ -34,8 +64,137 @@ app.get('/api/health', async () => {
     ok: true,
     historyServer: hs,
     model: { baseUrl: config.llm.baseUrl, model: config.llm.model, configured: Boolean(config.llm.apiKey) },
+    authRequired: Boolean(config.auth.token),
     version: '0.1.0',
   };
+});
+
+app.get('/api/config', async () => {
+  return {
+    spark: {
+      historyServerUrl: config.spark.historyServerUrl,
+    },
+    llm: {
+      baseUrl: config.llm.baseUrl,
+      model: config.llm.model,
+      maxTokens: config.llm.maxTokens,
+      hasApiKey: Boolean(config.llm.apiKey),
+      apiKeyPreview: config.llm.apiKey
+        ? `${config.llm.apiKey.slice(0, 6)}...${config.llm.apiKey.slice(-4)}`
+        : '',
+    },
+    auth: {
+      required: Boolean(config.auth.token),
+    },
+  };
+});
+
+app.post<{
+  Body: {
+    spark?: { historyServerUrl?: string };
+    llm?: { baseUrl?: string; apiKey?: string; model?: string; maxTokens?: number };
+    auth?: { token?: string };
+  };
+}>('/api/config', async (req) => {
+  const body = req.body ?? {};
+  if (body.spark?.historyServerUrl) {
+    config.spark.historyServerUrl = body.spark.historyServerUrl.replace(/\/+$/, '');
+  }
+  if (body.llm) {
+    if (body.llm.baseUrl) config.llm.baseUrl = body.llm.baseUrl.replace(/\/+$/, '');
+    if (body.llm.apiKey !== undefined && body.llm.apiKey !== '') config.llm.apiKey = body.llm.apiKey.trim();
+    if (body.llm.model) config.llm.model = body.llm.model.trim();
+    if (body.llm.maxTokens) config.llm.maxTokens = body.llm.maxTokens;
+  }
+  if (body.auth?.token !== undefined) {
+    config.auth.token = body.auth.token.trim();
+  }
+
+  manager.updateConfig(config);
+  llm = new LLMClient(config.llm);
+
+  return {
+    ok: true,
+    spark: {
+      historyServerUrl: config.spark.historyServerUrl,
+    },
+    llm: {
+      baseUrl: config.llm.baseUrl,
+      model: config.llm.model,
+      maxTokens: config.llm.maxTokens,
+      hasApiKey: Boolean(config.llm.apiKey),
+      apiKeyPreview: config.llm.apiKey
+        ? `${config.llm.apiKey.slice(0, 6)}...${config.llm.apiKey.slice(-4)}`
+        : '',
+    },
+    auth: {
+      required: Boolean(config.auth.token),
+    },
+  };
+});
+
+app.post<{ Body: { url?: string } }>('/api/config/test-hs', async (req) => {
+  const targetUrl = (req.body?.url || config.spark.historyServerUrl).replace(/\/+$/, '');
+  const start = Date.now();
+  try {
+    const client = new HistoryClient(targetUrl, { timeoutMs: 5000 });
+    const ping = await client.ping();
+    const durationMs = Date.now() - start;
+    if (!ping.ok) {
+      return { ok: false, error: ping.error ?? 'Failed to reach History Server', durationMs };
+    }
+    let appsCount = 0;
+    try {
+      const apps = await client.listApplications({ limit: 5 });
+      appsCount = apps.length;
+    } catch {}
+    return { ok: true, version: ping.version, appsCount, durationMs };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - start,
+    };
+  }
+});
+
+app.post<{ Body: { baseUrl?: string; apiKey?: string; model?: string } }>('/api/config/test-llm', async (req) => {
+  const baseUrl = (req.body?.baseUrl || config.llm.baseUrl).replace(/\/+$/, '');
+  const apiKey = req.body?.apiKey || config.llm.apiKey;
+  const model = req.body?.model || config.llm.model;
+
+  if (!apiKey) {
+    return { ok: false, error: 'API key is required to test LLM connection' };
+  }
+
+  const start = Date.now();
+  const testClient = new LLMClient({
+    baseUrl,
+    apiKey,
+    model,
+    maxTokens: 50,
+    timeoutMs: 15_000,
+  });
+
+  try {
+    const res = await testClient.complete({
+      system: 'Respond with "ok".',
+      messages: [{ role: 'user', content: 'ping' }],
+      tools: [],
+    });
+    const textBlock = res.blocks.find((b) => b.type === 'text');
+    return {
+      ok: true,
+      durationMs: Date.now() - start,
+      reply: textBlock?.type === 'text' ? textBlock.text.slice(0, 50) : 'ok',
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+      durationMs: Date.now() - start,
+    };
+  }
 });
 
 app.get('/api/apps', async (_req, reply) => {
@@ -190,8 +349,26 @@ app.post<{ Params: { id: string }; Body: { action?: 'approve' | 'reject' } }>(
  * ------------------------------------------------------------------ */
 
 app.register(async (instance) => {
-  instance.get<{ Params: { sid: string } }>('/ws/sessions/:sid', { websocket: true }, (socket, req) => {
+  instance.get<{ Params: { sid: string }; Querystring: { token?: string } }>('/ws/sessions/:sid', { websocket: true }, (socket, req) => {
     const sid = req.params.sid;
+    if (config.auth.token) {
+      const authHeader = req.headers.authorization;
+      const tokenHeader = req.headers['x-sparksleuth-token'];
+      const queryToken = req.query?.token;
+      let provided = '';
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        provided = authHeader.slice(7).trim();
+      } else if (typeof tokenHeader === 'string') {
+        provided = tokenHeader.trim();
+      } else if (typeof queryToken === 'string') {
+        provided = queryToken.trim();
+      }
+      if (provided !== config.auth.token) {
+        socket.close(1008, 'Unauthorized');
+        return;
+      }
+    }
+
     const send = (e: unknown) => {
       try {
         socket.send(JSON.stringify(e));
@@ -223,6 +400,35 @@ if (existsSync(webDist)) {
       return reply.code(404).send({ error: 'not found' });
     }
     return reply.sendFile('index.html');
+  });
+} else {
+  app.setNotFoundHandler((req, reply) => {
+    if (req.url.startsWith('/api') || req.url.startsWith('/ws')) {
+      return reply.code(404).send({ error: 'not found' });
+    }
+    return reply.code(503).type('text/html').send(`<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>SparkSleuth — Frontend Not Built</title>
+    <style>
+      body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fafaf9; color: #1c1917; padding: 48px 24px; line-height: 1.6; }
+      .card { max-width: 580px; margin: 0 auto; background: #fff; border: 1px solid #e7e5e4; border-radius: 12px; padding: 28px 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.04); }
+      h1 { font-size: 20px; margin: 0 0 12px; color: #ea580c; }
+      pre { background: #1c1917; color: #fafaf9; padding: 12px 14px; border-radius: 8px; font-size: 13px; overflow-x: auto; }
+      code { font-family: ui-monospace, Menlo, monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Frontend Assets Not Found</h1>
+      <p>SparkSleuth server is running, but the frontend distribution at <code>${webDist}</code> has not been built yet.</p>
+      <p>To compile the frontend assets, run:</p>
+      <pre>pnpm --filter @sparksleuth/web build</pre>
+      <p>Or start the Vite development server in the <code>web/</code> directory.</p>
+    </div>
+  </body>
+</html>`);
   });
 }
 

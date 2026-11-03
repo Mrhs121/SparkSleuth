@@ -9,6 +9,9 @@ import {
   buildSystemPrompt,
   createMemorySkill,
   createSessionSkill,
+  initSessionWorkspace,
+  resolveSessionWorkspace,
+  writeSessionReport,
   type AgentEvent,
   type Config,
   type Message,
@@ -41,7 +44,7 @@ interface ActiveRun {
  * the agent, persist every event, and summarise the session at the end.
  */
 export class SessionManager {
-  private readonly llm: LLMClient;
+  private llm: LLMClient;
   private readonly runs = new Map<string, ActiveRun>();
   private readonly subscribers = new Map<string, Set<(e: EmittedEvent) => void>>();
   private readonly textBuffers = new Map<string, string>();
@@ -56,15 +59,26 @@ export class SessionManager {
   }
 
   workspace(sid: string): string {
-    return resolve(this.config.runtime.dataDir, 'workspaces', sid);
+    return resolveSessionWorkspace(this.config.runtime.dataDir, sid);
+  }
+
+  updateConfig(config: Config): void {
+    Object.assign(this.config.spark, config.spark);
+    Object.assign(this.config.llm, config.llm);
+    Object.assign(this.config.auth, config.auth);
+    this.llm = new LLMClient(this.config.llm);
   }
 
   async create(input: { message: string; appId?: string }): Promise<{ sid: string }> {
+    if (this.runs.size >= this.config.runtime.concurrency) {
+      throw new Error(
+        `Concurrency limit reached (${this.config.runtime.concurrency} active runs). Please wait for an existing session to finish or stop one.`,
+      );
+    }
     const sid = randomUUID();
     const title = input.message.slice(0, 60) + (input.message.length > 60 ? '…' : '');
     this.db.createSession(sid, title);
-    await mkdir(join(this.workspace(sid), 'reports'), { recursive: true });
-    await mkdir(join(this.workspace(sid), 'artifacts'), { recursive: true });
+    await initSessionWorkspace(this.workspace(sid));
     this.db.updateSession(sid, { app_ids: JSON.stringify(input.appId ? [input.appId] : []) });
 
     // Fire and forget: the client follows progress over the websocket.
@@ -79,18 +93,39 @@ export class SessionManager {
   }
 
   async continue(sid: string, message: string): Promise<void> {
+    const session = this.db.getSession(sid);
+    if (!session) throw new Error(`Unknown session ${sid}`);
+    if (session.status === 'closed') {
+      throw new Error(`Session ${sid} is closed and archived. Start a new investigation to continue.`);
+    }
     if (this.runs.has(sid)) throw new Error('This session is still running. Wait for it to finish or cancel it.');
+    if (this.runs.size >= this.config.runtime.concurrency) {
+      throw new Error(
+        `Concurrency limit reached (${this.config.runtime.concurrency} active runs). Please wait for an existing session to finish or stop one.`,
+      );
+    }
     void this.run(sid, message);
   }
 
   private async run(sid: string, userMessage: string): Promise<void> {
     const session = this.db.getSession(sid);
     if (!session) throw new Error(`Unknown session ${sid}`);
+    if (session.status === 'closed') throw new Error(`Session ${sid} is closed and cannot be run.`);
 
     const abort = new AbortController();
     const active: ActiveRun = { abort, messages: [], usage: { input: 0, output: 0 } };
     this.runs.set(sid, active);
     this.db.updateSession(sid, { status: 'running' });
+
+    let timeoutTimer: NodeJS.Timeout | undefined;
+    if (this.config.runtime.sessionTimeoutMs > 0) {
+      timeoutTimer = setTimeout(() => {
+        if (this.runs.has(sid)) {
+          abort.abort(new Error(`Session timed out after ${Math.round(this.config.runtime.sessionTimeoutMs / 1000)}s`));
+        }
+      }, this.config.runtime.sessionTimeoutMs);
+      timeoutTimer.unref?.();
+    }
 
     try {
       active.messages = await this.loadHistory(sid);
@@ -111,12 +146,9 @@ export class SessionManager {
               this.emit(sid, { type: 'finding', ...f });
             },
             saveReport: async (r) => {
-              const path = join(this.workspace(sid), 'reports', `report-${Date.now()}.md`);
-              // The model usually opens with its own H1; do not stack two.
-              const body = r.markdown.replace(/^\s*#\s+.*\n+/, '');
-              await writeFile(path, `# ${r.title}\n\n${body}\n`, 'utf8');
-              this.emit(sid, { type: 'report', path, title: r.title });
-              return { path };
+              const res = await writeSessionReport(this.workspace(sid), r.title, r.markdown);
+              this.emit(sid, { type: 'report', path: res.path, title: r.title });
+              return res;
             },
           }),
           createMemorySkill(this.memory),
@@ -151,14 +183,38 @@ export class SessionManager {
       active.usage = result.usage;
       this.flushText(sid);
       this.db.addUsage(sid, result.usage.input, result.usage.output);
+
+      if (abort.signal.aborted || result.reason === 'aborted') {
+        const currentSession = this.db.getSession(sid);
+        if (currentSession?.status !== 'cancelled') {
+          this.db.updateSession(sid, { status: 'cancelled' });
+          this.emit(sid, { type: 'cancelled' });
+        }
+        return;
+      }
+
       this.db.updateSession(sid, { status: 'waiting', last_message: this.lastAssistantText(result.messages) });
       this.emit(sid, { type: 'done', reason: result.reason, usage: result.usage });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       this.flushText(sid);
+      if (abort.signal.aborted) {
+        // Aborted either by cancel() or by session timeout.
+        const currentSession = this.db.getSession(sid);
+        if (currentSession?.status === 'cancelled') {
+          // Explicitly cancelled by user; cancel() already emitted 'cancelled'
+          return;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        const isTimeout = message.toLowerCase().includes('timed out');
+        this.db.updateSession(sid, { status: isTimeout ? 'failed' : 'cancelled' });
+        this.emit(sid, { type: isTimeout ? 'error' : 'cancelled', message });
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
       this.db.updateSession(sid, { status: 'failed' });
       this.emit(sid, { type: 'error', message });
     } finally {
+      if (timeoutTimer) clearTimeout(timeoutTimer);
       this.runs.delete(sid);
     }
   }
@@ -253,18 +309,41 @@ export class SessionManager {
     const messages: Message[] = [];
     const events = this.db.listEvents(sid);
     let pendingAssistant = '';
+    const pendingToolResults: string[] = [];
+
+    const flushAssistant = () => {
+      const parts: string[] = [];
+      if (pendingAssistant.trim()) parts.push(pendingAssistant.trim());
+      if (pendingToolResults.length > 0) {
+        parts.push(`[Previous tool findings & data:\n${pendingToolResults.join('\n')}]`);
+      }
+      if (parts.length > 0) {
+        messages.push({ role: 'assistant', content: parts.join('\n\n') });
+      }
+      pendingAssistant = '';
+      pendingToolResults.length = 0;
+    };
+
     for (const row of events) {
       const payload = JSON.parse(row.payload) as EmittedEvent;
       if (payload.type === 'text' && typeof payload.text === 'string') {
         pendingAssistant += `${payload.text}\n`;
+      } else if (payload.type === 'tool_result') {
+        const skill = String(payload.skill ?? '');
+        const tool = String(payload.tool ?? '');
+        const summary = typeof payload.summary === 'string' ? payload.summary.slice(0, 1200) : '';
+        if (summary && !tool.includes('todo_write')) {
+          pendingToolResults.push(`• ${skill}.${tool}: ${summary}`);
+        }
+      } else if (payload.type === 'finding') {
+        pendingToolResults.push(`• [Milestone ${payload.stage}]: ${payload.finding}`);
       } else if (payload.type === 'user_message' && typeof payload.text === 'string') {
-        if (pendingAssistant.trim()) messages.push({ role: 'assistant', content: pendingAssistant.trim() });
-        pendingAssistant = '';
+        flushAssistant();
         messages.push({ role: 'user', content: payload.text });
       }
     }
-    if (pendingAssistant.trim()) messages.push({ role: 'assistant', content: pendingAssistant.trim() });
-    return messages.slice(-12);
+    flushAssistant();
+    return messages.slice(-16);
   }
 
   private lastAssistantText(messages: Message[]): string {
@@ -288,6 +367,10 @@ export class SessionManager {
   async finish(sid: string): Promise<{ ok: boolean; summary?: SessionSummary }> {
     const session = this.db.getSession(sid);
     if (!session) throw new Error(`Unknown session ${sid}`);
+    if (session.status === 'closed') {
+      // Idempotent: already closed, do not duplicate summaries or re-archive
+      return { ok: true };
+    }
     if (this.runs.has(sid)) throw new Error('Session is still running');
 
     this.db.updateSession(sid, { status: 'finalizing' });

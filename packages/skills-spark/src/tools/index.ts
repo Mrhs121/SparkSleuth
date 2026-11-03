@@ -614,7 +614,114 @@ const factsDump: ToolDefinition = {
   },
 };
 
-export const diagnoseTools: ToolDefinition[] = [diagnoseApp, ruleList, factsDump];
+const compareApps: ToolDefinition = {
+  name: 'compare_apps',
+  description:
+    'Compare two Spark applications (A/B testing, before vs after optimization, or fast vs slow run). Compares wall-clock duration, spill, shuffle volume, GC pressure, key configuration differences, and resolved diagnostic findings.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      baselineAppId: { type: 'string', description: 'Application ID of the baseline/original run' },
+      experimentAppId: { type: 'string', description: 'Application ID of the comparison/optimized run' },
+    },
+    required: ['baselineAppId', 'experimentAppId'],
+  },
+  async execute(input, ctx) {
+    const baseId = String(input.baselineAppId);
+    const expId = String(input.experimentAppId);
+    const client = historyClient(ctx);
+
+    const [baseFacts, expFacts] = await Promise.all([
+      collectFacts(client, baseId, { signal: ctx.signal, topStages: 10 }),
+      collectFacts(client, expId, { signal: ctx.signal, topStages: 10 }),
+    ]);
+
+    const ruleThresholds = thresholds(ctx as any);
+    const baseFindings = runRules(baseFacts, ruleThresholds);
+    const expFindings = runRules(expFacts, ruleThresholds);
+
+    const baseSpill = baseFacts.stages.reduce((acc, s) => acc + s.memorySpill, 0);
+    const expSpill = expFacts.stages.reduce((acc, s) => acc + s.memorySpill, 0);
+    const baseShuffle = baseFacts.stages.reduce((acc, s) => acc + s.shuffleReadBytes, 0);
+    const expShuffle = expFacts.stages.reduce((acc, s) => acc + s.shuffleReadBytes, 0);
+
+    const durDelta = expFacts.durationMs - baseFacts.durationMs;
+    const durPct = baseFacts.durationMs > 0 ? ((durDelta / baseFacts.durationMs) * 100).toFixed(1) : '0';
+    const durSign = durDelta <= 0 ? 'faster' : 'slower';
+
+    // Config diff
+    const allConfigKeys = new Set([...Object.keys(baseFacts.config), ...Object.keys(expFacts.config)]);
+    const configDiff: Array<{ key: string; baseline: string; experiment: string }> = [];
+    for (const k of allConfigKeys) {
+      if (baseFacts.config[k] !== expFacts.config[k]) {
+        configDiff.push({
+          key: k,
+          baseline: baseFacts.config[k] ?? '(not set)',
+          experiment: expFacts.config[k] ?? '(not set)',
+        });
+      }
+    }
+
+    // Findings diff
+    const baseRuleIds = new Set(baseFindings.map((f) => f.ruleId));
+    const expRuleIds = new Set(expFindings.map((f) => f.ruleId));
+    const resolvedFindings = [...baseRuleIds].filter((r) => !expRuleIds.has(r));
+    const newFindings = [...expRuleIds].filter((r) => !baseRuleIds.has(r));
+
+    const comparisonArtifact = {
+      baseline: { appId: baseId, facts: baseFacts, findings: baseFindings },
+      experiment: { appId: expId, facts: expFacts, findings: expFindings },
+      configDiff,
+      resolvedFindings,
+      newFindings,
+    };
+
+    const stored = await ctx.artifacts.write('ab_comparison', comparisonArtifact);
+
+    const rows = [
+      `## A/B Comparison: ${baseId} → ${expId}`,
+      `**Duration**: ${duration(baseFacts.durationMs)} → ${duration(expFacts.durationMs)} (${Math.abs(Number(durPct))}% ${durSign})`,
+      '',
+      '| Metric | Baseline (A) | Experiment (B) | Delta |',
+      '|---|---|---|---|',
+      `| Duration | ${duration(baseFacts.durationMs)} | ${duration(expFacts.durationMs)} | ${durDelta < 0 ? '-' : '+'}${duration(Math.abs(durDelta))} (${durPct}%) |`,
+      `| Memory Spill | ${bytes(baseSpill)} | ${bytes(expSpill)} | ${bytes(expSpill - baseSpill)} |`,
+      `| Shuffle Read | ${bytes(baseShuffle)} | ${bytes(expShuffle)} | ${bytes(expShuffle - baseShuffle)} |`,
+      `| Stages | ${baseFacts.stages.length} | ${expFacts.stages.length} | ${expFacts.stages.length - baseFacts.stages.length} |`,
+      `| Executor GC Ratio | ${pct(baseFacts.executors.gcRatio)} | ${pct(expFacts.executors.gcRatio)} | ${pct(expFacts.executors.gcRatio - baseFacts.executors.gcRatio)} |`,
+      `| Failed Tasks | ${baseFacts.executors.failedTasks} | ${expFacts.executors.failedTasks} | ${expFacts.executors.failedTasks - baseFacts.executors.failedTasks} |`,
+      '',
+    ];
+
+    if (resolvedFindings.length > 0) {
+      rows.push(`**Eliminated Findings (${resolvedFindings.length})**: ${resolvedFindings.join(', ')}`);
+    }
+    if (newFindings.length > 0) {
+      rows.push(`**New Findings (${newFindings.length})**: ${newFindings.join(', ')}`);
+    }
+
+    if (configDiff.length > 0) {
+      rows.push('', '### Spark Config Differences:');
+      rows.push('| Configuration | Baseline | Experiment |');
+      rows.push('|---|---|---|');
+      for (const d of configDiff.slice(0, 10)) {
+        rows.push(`| \`${d.key}\` | \`${d.baseline}\` | \`${d.experiment}\` |`);
+      }
+      if (configDiff.length > 10) {
+        rows.push(`*...and ${configDiff.length - 10} more configuration differences in artifact*`);
+      }
+    }
+
+    rows.push('', `Full comparison artifact: \`${stored.id}\`.`);
+
+    return {
+      summary: rows.join('\n'),
+      artifact: stored.id,
+    };
+  },
+};
+
+export const diagnoseTools: ToolDefinition[] = [diagnoseApp, ruleList, factsDump, compareApps];
 
 export { httpJson, parseSparkTime };
 function truncateText(s: string, n: number): string {

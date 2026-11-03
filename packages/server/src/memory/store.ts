@@ -50,29 +50,33 @@ export class MemoryStoreImpl implements MemoryStore {
     const since = query.days ? Date.now() - query.days * 86_400_000 : 0;
     const rows = this.db.listMemoryIndex(500).filter((r) => r.created_at >= since);
 
-    const keyword = query.keyword?.toLowerCase();
+    const keyword = query.keyword?.toLowerCase().trim();
     const wanted = query.tags?.map((t) => t.toLowerCase()) ?? [];
+    const hasQuery = Boolean(keyword || wanted.length > 0);
 
     const scored = rows
       .map((r) => {
         const tags = safeJson<string[]>(r.tags, []);
-        let score = 0;
+        let relevance = 0;
         if (keyword) {
           const haystack = `${r.title} ${r.description} ${r.tags}`.toLowerCase();
-          if (haystack.includes(keyword)) score += 3;
+          if (haystack.includes(keyword)) relevance += 3;
           for (const word of keyword.split(/\s+/).filter(Boolean)) {
-            if (haystack.includes(word)) score += 1;
+            if (haystack.includes(word)) relevance += 1;
           }
         }
         for (const t of wanted) {
-          if (tags.some((tag) => tag.toLowerCase().includes(t))) score += 2;
+          if (tags.some((tag) => tag.toLowerCase().includes(t))) relevance += 2;
         }
-        if (!keyword && !wanted.length) score = 1; // pure recency
-        // Recency tie-breaker.
-        score += r.created_at / Date.now();
-        return { r, tags, score };
+
+        // Recency bonus: small weight in [0, 0.5] decaying over 30 days.
+        const ageMs = Math.max(0, Date.now() - r.created_at);
+        const recencyBonus = Math.max(0, 0.5 * (1 - ageMs / (30 * 86_400_000)));
+
+        const score = relevance + recencyBonus;
+        return { r, tags, relevance, score };
       })
-      .filter((x) => x.score > 1)
+      .filter((x) => (hasQuery ? x.relevance > 0 : x.score > 0))
       .sort((a, b) => b.score - a.score)
       .slice(0, query.limit ?? 5);
 

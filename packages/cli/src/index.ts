@@ -11,6 +11,8 @@ import {
   createSessionSkill,
   loadConfig,
   loadDotEnv,
+  resolveSessionWorkspace,
+  writeSessionReport,
   type AgentEvent,
   type MemoryHit,
   type MemoryStore,
@@ -37,7 +39,7 @@ Environment:
 }
 
 /** Session hooks for the CLI: print milestones instead of pushing them to a UI. */
-function cliHooks() {
+function cliHooks(workspaceDir: string) {
   const findings: string[] = [];
   let reportPath = '';
   return {
@@ -54,11 +56,9 @@ function cliHooks() {
         console.log(`\n[${p.stage}] ${p.finding}`);
       },
       async saveReport(p: { title: string; markdown: string }) {
-        reportPath = resolve(process.cwd(), 'data', 'reports', `${Date.now()}.md`);
-        const { mkdirSync, writeFileSync } = await import('node:fs');
-        mkdirSync(resolve(process.cwd(), 'data', 'reports'), { recursive: true });
-        writeFileSync(reportPath, `# ${p.title}\n\n${p.markdown}\n`, 'utf8');
-        return { path: reportPath };
+        const res = await writeSessionReport(workspaceDir, p.title, p.markdown);
+        reportPath = res.path;
+        return res;
       },
     },
   };
@@ -78,15 +78,16 @@ function emptyMemory(): MemoryStore {
   };
 }
 
-function buildRegistry(config: ReturnType<typeof loadConfig>) {
-  const session = cliHooks();
+function buildRegistry(config: ReturnType<typeof loadConfig>, sessionId: string = 'cli') {
+  const workspaceDir = resolveSessionWorkspace(config.runtime.dataDir, sessionId);
+  const session = cliHooks(workspaceDir);
   const skills = [
     ...sparkSkills,
     createSessionSkill(session.hooks),
     createMemorySkill(emptyMemory()),
   ];
   const registry = new ToolRegistry(skills, { config });
-  return { registry, session };
+  return { registry, session, workspaceDir };
 }
 
 function printEvent(e: AgentEvent): void {

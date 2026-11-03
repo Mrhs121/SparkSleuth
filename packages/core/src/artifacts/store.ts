@@ -84,6 +84,46 @@ export class ArtifactStore {
     return `Result too large (${text.length} chars, ${total ?? 'n/a'} items). Narrow it with filter/sortBy/top/fields.\n${text.slice(0, MAX_QUERY_OUTPUT)}`;
   }
 
+  async inspect(id: string): Promise<string> {
+    const s = await stat(this.resolveSafe(id));
+    const data = await this.read(id);
+    if (Array.isArray(data)) {
+      const sample = data.slice(0, 3);
+      const first = sample[0];
+      const keys = first && typeof first === 'object' && first !== null ? Object.keys(first as Record<string, unknown>) : [];
+      return [
+        `Artifact ${id}: Array of ${data.length} item(s) (${s.size} bytes)`,
+        keys.length ? `Item fields: ${keys.join(', ')}` : '',
+        `Sample (first ${sample.length} item(s)):`,
+        JSON.stringify(sample, null, 2),
+      ]
+        .filter(Boolean)
+        .join('\n');
+    }
+    if (typeof data === 'object' && data !== null) {
+      const obj = data as Record<string, unknown>;
+      const keys = Object.keys(obj);
+      const summaryObj: Record<string, unknown> = {};
+      for (const k of keys.slice(0, 15)) {
+        const v = obj[k];
+        if (Array.isArray(v)) {
+          summaryObj[k] = `Array(${v.length})`;
+        } else if (typeof v === 'object' && v !== null) {
+          summaryObj[k] = `Object(${Object.keys(v).slice(0, 5).join(', ')})`;
+        } else {
+          summaryObj[k] = v;
+        }
+      }
+      return [
+        `Artifact ${id}: Object with ${keys.length} key(s) (${s.size} bytes)`,
+        `Keys: ${keys.join(', ')}`,
+        'Structure overview:',
+        JSON.stringify(summaryObj, null, 2),
+      ].join('\n');
+    }
+    return `Artifact ${id}: ${typeof data} (${s.size} bytes)\nValue: ${String(data).slice(0, 2000)}`;
+  }
+
   async list(): Promise<StoredArtifact[]> {
     try {
       const names = await readdir(this.dir);
