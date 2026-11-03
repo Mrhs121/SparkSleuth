@@ -35,6 +35,6 @@
     <text x="0" y="98" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, sans-serif" font-size="68" font-weight="900" font-style="italic" fill="url(#sparkOrange)" letter-spacing="-1.5">Spark</text>
     
     <!-- 副标题: 性能与根因诊断 -->
-    <text x="3" y="132" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, sans-serif" font-size="14" font-weight="700" fill="#1A365D" letter-spacing="3.5">PERFORMANCE & DIAGNOSIS</text>
+    <text x="3" y="132" font-family="system-ui, -apple-system, BlinkMacSystemFont, &#39;Segoe UI&#39;, Roboto, sans-serif" font-size="14" font-weight="700" fill="#1A365D" letter-spacing="3.5">PERFORMANCE &amp; DIAGNOSIS</text>
   </g>
 </svg>
