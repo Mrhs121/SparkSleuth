@@ -18,17 +18,25 @@
 
 ## Key Interface & Capabilities
 
-````carousel
-![Investigation Workspace](docs/screenshots/04_diagnostic_session.png)
-<!-- slide -->
-![Searchable Application Selector](docs/screenshots/02_app_select_dropdown.png)
-<!-- slide -->
-![Visual Settings & Connection Ping](docs/screenshots/03_settings_modal.png)
-<!-- slide -->
-![Long-Term Memory & Candidate Rules](docs/screenshots/05_memory_knowledge_base.png)
-<!-- slide -->
-![Case Report & Deep Dive](docs/screenshots/06_memory_investigation_doc.png)
-````
+### Investigation Workspace
+
+![Investigation Workspace](<docs/screenshots/04_diagnostic_session.png>)
+
+### Searchable Application Selector
+
+![Searchable Application Selector](<docs/screenshots/02_app_select_dropdown.png>)
+
+### Visual Settings & Connection Ping
+
+![Visual Settings & Connection Ping](<docs/screenshots/03_settings_modal.png>)
+
+### Long-Term Memory & Candidate Rules
+
+![Long-Term Memory & Candidate Rules](<docs/screenshots/05_memory_knowledge_base.png>)
+
+### Case Report & Deep Dive
+
+![Case Report & Deep Dive](<docs/screenshots/06_memory_investigation_doc.png>)
 
 - **Evidence-Driven Investigation Workspace**: The agent conducts autonomous step-by-step investigations with transparent reasoning traces, tool call groupings, and an interactive Inspector with draggable widths.
 - **Searchable Application Selector**: Fuzzy-search live and completed applications directly from Spark History Server with status badges and execution metrics.
