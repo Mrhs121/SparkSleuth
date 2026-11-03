@@ -1,0 +1,25 @@
+# runtime data
+data/
+!data/.gitkeep
+
+# deps & build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# env & secrets
+.env
+.env.*
+!.env.example
+
+# local caches
+.ocr/
+.cache/
+coverage/
+.DS_Store
+
+# local scraped material (not part of the project)
+截屏*.png
+PPT内容整理.md
+设计方案.md
