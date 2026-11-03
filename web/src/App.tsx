@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { marked } from 'marked';
 import { api, getAuthToken, type ServerConfig } from './api.ts';
 import { useI18n } from './i18n.tsx';
-import type { AppInfo, DreamCandidate, Finding, MemoryDoc, RemEvent, SessionSummary } from './types.ts';
+import type { AppInfo, Finding, MemoryDoc, RemEvent, SessionSummary } from './types.ts';
+import { useSourceResource } from './useSourceResource.ts';
 import {
   IconAlert,
   IconCheck,
@@ -29,6 +30,8 @@ import {
 } from './Icons.tsx';
 import { AppSelect } from './AppSelect.tsx';
 import { SettingsModal } from './SettingsModal.tsx';
+import { GraphPanel } from './GraphPanel.tsx';
+import { parseGraphTarget, type GraphNavigation } from './graph.ts';
 
 /* ------------------------------------------------------------------ *
  * Event stream -> chat items
@@ -117,6 +120,9 @@ export function App() {
   const [reports, setReports] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState<string>('');
+  const [graphSignal, setGraphSignal] = useState<{ revision: number; appId?: string; snapshotSaved?: boolean }>({ revision: 0 });
+  const [sessionAppIds, setSessionAppIds] = useState<string[]>([]);
+  const [composerDraft, setComposerDraft] = useState<{ text: string; revision: number }>({ text: '', revision: 0 });
   const [health, setHealth] = useState<{
     ok: boolean;
     historyServer: { ok: boolean; error?: string };
@@ -228,6 +234,10 @@ export function App() {
       ws.onmessage = (msg) => {
         try {
           const e = JSON.parse(msg.data as string) as RemEvent;
+          if (e.type === 'graph_available' && typeof e.appId === 'string') {
+            setSessionAppIds((prev) => [...new Set([...prev, e.appId as string])]);
+            if (!replaying) setGraphSignal((prev) => ({ revision: prev.revision + 1, appId: e.appId as string, snapshotSaved: e.snapshotSaved === true }));
+          }
           if (e.type === 'replay_complete') {
             replaying = false;
             setItems(replayItems);
@@ -239,7 +249,7 @@ export function App() {
             if (e.type === 'finding') {
               replayFindings = [
                 ...replayFindings,
-                { stage: String(e.stage), tools: (e.tools as string[]) ?? [], finding: String(e.finding), ts: e.ts },
+                { stage: String(e.stage), tools: (e.tools as string[]) ?? [], finding: String(e.finding), ts: e.ts, target: parseGraphTarget(e.target) },
               ];
             }
             if (e.type === 'usage' && e.usage) {
@@ -250,7 +260,7 @@ export function App() {
             if (e.type === 'finding') {
               setFindings((prev) => [
                 ...prev,
-                { stage: String(e.stage), tools: (e.tools as string[]) ?? [], finding: String(e.finding), ts: e.ts },
+                { stage: String(e.stage), tools: (e.tools as string[]) ?? [], finding: String(e.finding), ts: e.ts, target: parseGraphTarget(e.target) },
               ]);
             }
             if (e.type === 'usage' && e.usage) {
@@ -283,11 +293,17 @@ export function App() {
 
     setItems([]);
     setFindings([]);
+    setSessionAppIds([]);
+    setGraphSignal({ revision: 0 });
+    setComposerDraft({ text: '', revision: 0 });
+    setStatus('');
     setUsage({ input: 0, output: 0 });
 
     api
       .session(sid)
       .then((d) => {
+        if (disposed) return;
+        setSessionAppIds((prev) => [...new Set([...prev, ...(d.session.appIds ?? []), ...(d.session.appId ? [d.session.appId] : []), ...d.findings.flatMap((f) => f.target ? [f.target.appId] : [])])]);
         setReports(d.reports);
         setFindings(d.findings);
         setRunning(d.running);
@@ -322,7 +338,7 @@ export function App() {
   const onStart = async (message: string, appId?: string) => {
     setError(null);
     try {
-      const { sid: newSid } = await api.create(message, appId);
+      const { sid: newSid } = await api.create(message, appId, lang);
       setSid(newSid);
       setRunning(true);
       await refreshSessions();
@@ -338,9 +354,10 @@ export function App() {
 
   const onSend = async (message: string) => {
     if (!sid) return onStart(message);
+    if (status === 'closed' || status === 'finalizing') return;
     setError(null);
     try {
-      await api.send(sid, message);
+      await api.send(sid, message, lang);
       setRunning(true);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -364,7 +381,7 @@ export function App() {
     if (!sid || status === 'closed' || status === 'finalizing') return;
     setStatus('finalizing');
     try {
-      await api.finish(sid);
+      await api.finish(sid, lang);
       setStatus('closed');
       await refreshSessions();
     } catch (err) {
@@ -593,7 +610,9 @@ export function App() {
               <Composer
                 onSend={onSend}
                 running={running}
-                disabled={isClosed}
+                key={sid}
+                draft={composerDraft}
+                disabled={isClosed || status === 'finalizing' || !status}
                 disabledPlaceholder={t.composerDisabledPlaceholder}
               />
             </>
@@ -625,7 +644,9 @@ export function App() {
             <div className="resizer-knob" />
           </div>
           <aside className="inspector" style={{ width: inspectorWidth }}>
-            <InspectorTabs sid={sid} findings={findings} reports={reports} usage={usage} />
+            <InspectorTabs key={sid} sid={sid} findings={findings} reports={reports} usage={usage}
+              readOnly={isClosed || status === 'finalizing' || !status} appIds={sessionAppIds} graphSignal={graphSignal}
+              onFollowUp={(text) => { if (!isClosed && status !== 'finalizing') setComposerDraft((prev) => ({ text, revision: prev.revision + 1 })); }} />
           </aside>
         </>
       )}
@@ -1131,30 +1152,30 @@ function InspectorTabs({
   sid,
   findings,
   reports,
-  usage,
+  usage, readOnly, appIds, graphSignal, onFollowUp,
 }: {
+  readOnly: boolean; appIds: string[]; graphSignal: { revision: number; appId?: string; snapshotSaved?: boolean }; onFollowUp: (text: string) => void;
   sid: string | null;
   findings: Finding[];
   reports: string[];
   usage: { input: number; output: number };
 }) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<'timeline' | 'report' | 'usage'>('timeline');
+  const [tab, setTab] = useState<'timeline' | 'report' | 'usage' | 'graph'>('timeline');
+  const [navigation, setNavigation] = useState<GraphNavigation>({ revision: 0 });
   const [reportFile, setReportFile] = useState<string | null>(null);
-  const [reportText, setReportText] = useState('');
   const [copied, setCopied] = useState(false);
+  const [reportRevision, setReportRevision] = useState(0);
 
   useEffect(() => {
-    setReportFile(reports[0] ?? null);
-  }, [reports.join(',')]);
+    setReportFile((prev) => prev && reports.includes(prev) ? prev : reports[0] ?? null);
+  }, [sid, reports.join(',')]);
 
-  useEffect(() => {
-    if (!sid || !reportFile) {
-      setReportText('');
-      return;
-    }
-    api.report(sid, reportFile).then(setReportText).catch(() => setReportText(''));
-  }, [sid, reportFile]);
+  const loadReport = useCallback((signal: AbortSignal) =>
+    api.report(sid!, reportFile!, signal), [sid, reportFile]);
+  const reportResource = useSourceResource(sid && reportFile ? JSON.stringify([sid, reportFile]) : null,
+    tab === 'report', loadReport, reportRevision);
+  const reportText = reportResource.data ?? '';
 
   const copyReport = () => {
     if (!reportText) return;
@@ -1167,6 +1188,7 @@ function InspectorTabs({
   return (
     <>
       <div className="tabs">
+        <button type="button" className={tab === 'graph' ? 'active' : ''} onClick={() => setTab('graph')}><IconSpark width={14} height={14} /><span>{t.tabGraph}</span></button>
         <button
           type="button"
           className={tab === 'timeline' ? 'active' : ''}
@@ -1195,7 +1217,8 @@ function InspectorTabs({
         </button>
       </div>
 
-      <div className="inspector-body">
+      <div className={`inspector-body ${tab === 'graph' ? 'inspector-graph-body' : ''}`}>
+        {sid && <GraphPanel sid={sid} active={tab === 'graph'} readOnly={readOnly} appIds={appIds} signal={graphSignal} navigation={navigation} onFollowUp={onFollowUp} onNavigate={(target) => setNavigation((prev) => ({ revision: prev.revision + 1, target }))} />}
         {tab === 'timeline' && (
           <>
             {findings.length === 0 && (
@@ -1206,6 +1229,7 @@ function InspectorTabs({
                 <li key={i} className="timeline-item">
                   <div className="tl-stage">{f.stage}</div>
                   <div className="tl-finding">{f.finding}</div>
+                  <button type="button" className="graph-timeline-link" onClick={() => { setNavigation((prev) => ({ revision: prev.revision + 1, target: parseGraphTarget(f.target) })); setTab('graph'); }}>{t.graphViewInGraph}</button>
                   {f.tools.length > 0 && <div className="tl-tools">{f.tools.join(' · ')}</div>}
                 </li>
               ))}
@@ -1215,6 +1239,7 @@ function InspectorTabs({
 
         {tab === 'report' && (
           <>
+            <ContentStatus {...reportResource} onRetry={() => setReportRevision((v) => v + 1)} />
             {reports.length === 0 && (
               <div className="empty-small">{t.noReport}</div>
             )}
@@ -1273,8 +1298,9 @@ function Composer({
   onSend,
   running,
   disabled,
-  disabledPlaceholder,
+  disabledPlaceholder, draft,
 }: {
+  draft?: { text: string; revision: number };
   onSend: (message: string) => void;
   running: boolean;
   disabled?: boolean;
@@ -1282,6 +1308,12 @@ function Composer({
 }) {
   const { t } = useI18n();
   const [text, setText] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!draft?.revision || disabled) return;
+    setText((prev) => prev.trim() ? `${prev}\n\n${draft.text}` : draft.text);
+    textareaRef.current?.focus();
+  }, [draft?.revision]);
 
   const submit = () => {
     const value = text.trim();
@@ -1294,6 +1326,7 @@ function Composer({
     <div className="composer">
       <div className={`composer-box ${disabled ? 'disabled' : ''}`}>
         <textarea
+          ref={textareaRef}
           value={text}
           disabled={disabled}
           placeholder={
@@ -1335,37 +1368,64 @@ function Composer({
 
 function MemoryView({ onBack }: { onBack: () => void }) {
   const { lang, setLang, t } = useI18n();
-  const [docs, setDocs] = useState<MemoryDoc[]>([]);
   const [keyword, setKeyword] = useState('');
-  const [docText, setDocText] = useState('');
+  const [searchKeyword, setSearchKeyword] = useState('');
   const [docSid, setDocSid] = useState<string | null>(null);
+  const [selectedRecord, setSelectedRecord] = useState<MemoryDoc | null>(null);
   const [activeTab, setActiveTab] = useState<'learnings' | 'doc'>('learnings');
-  const [experience, setExperience] = useState<string[]>([]);
-  const [candidates, setCandidates] = useState<DreamCandidate[]>([]);
   const [busy, setBusy] = useState(false);
-
-  const selectedDoc = docs.find((d) => d.sid === docSid);
-
-  const load = useCallback(async () => {
-    const [d, e, c] = await Promise.all([
-      api.memory(keyword || undefined).catch(() => []),
-      api.experience().catch(() => ({ items: [] })),
-      api.dreamCandidates().catch(() => []),
-    ]);
-    setDocs(d);
-    setExperience(e.items);
-    setCandidates(c);
-  }, [keyword]);
+  const [actionError, setActionError] = useState<string>();
+  const [revision, setRevision] = useState(0);
+  const [docRevision, setDocRevision] = useState(0);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    const timer = setTimeout(() => setSearchKeyword(keyword.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [keyword]);
 
-  const handleSelectDoc = async (caseSid: string) => {
+  const loadDocs = useCallback((signal: AbortSignal) =>
+    api.memory(searchKeyword || undefined, signal), [searchKeyword]);
+  const docsResource = useSourceResource(`memory:${searchKeyword}`, true, loadDocs, revision);
+  const experienceResource = useSourceResource('experience', activeTab === 'learnings', api.experience, revision);
+  const candidatesResource = useSourceResource('candidates', activeTab === 'learnings', api.dreamCandidates, revision);
+  const loadDoc = useCallback((signal: AbortSignal) =>
+    api.memoryDoc(docSid!, signal), [docSid]);
+  const docResource = useSourceResource(docSid, activeTab === 'doc', loadDoc, docRevision);
+  const docs = docsResource.data ?? [];
+  const experience = experienceResource.data?.items ?? [];
+  const candidates = candidatesResource.data ?? [];
+  const docText = docResource.data ?? '';
+  const loadSelectedIndex = useCallback((signal: AbortSignal) =>
+    api.memory(undefined, signal), []);
+  const selectedIndexResource = useSourceResource('selected-memory-index',
+    activeTab === 'doc' && !!docSid && !!searchKeyword, loadSelectedIndex, revision);
+  const selectedDoc = docs.find((d) => d.sid === docSid)
+    ?? selectedIndexResource.data?.find((d) => d.sid === docSid) ?? selectedRecord;
+  // The exact document includes its authored title as H1, even if it falls outside the index limit.
+  const documentHeading = !docResource.loading && !docResource.error
+    ? /^#\s+(.+)$/m.exec(docText)?.[1] : undefined;
+  const selectedTitle = documentHeading ?? selectedDoc?.title;
+
+  // Preserve selection by exact sid, including when a search temporarily hides the case.
+  useEffect(() => {
+    const record = docsResource.data?.find((d) => d.sid === docSid)
+      ?? selectedIndexResource.data?.find((d) => d.sid === docSid);
+    if (record) setSelectedRecord(record);
+  }, [docsResource.data, selectedIndexResource.data, docSid]);
+
+  const refreshLearnings = () => setRevision((v) => v + 1);
+  const runMemoryAction = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setActionError(undefined);
+    try { await action(); refreshLearnings(); }
+    catch (err) { setActionError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
+
+  const handleSelectDoc = (caseSid: string) => {
+    setSelectedRecord(docs.find((d) => d.sid === caseSid) ?? null);
     setDocSid(caseSid);
     setActiveTab('doc');
-    const text = await api.memoryDoc(caseSid).catch(() => '');
-    setDocText(text);
   };
 
   const handleBackToLearnings = () => {
@@ -1396,12 +1456,7 @@ function MemoryView({ onBack }: { onBack: () => void }) {
             type="button"
             className="btn btn-secondary"
             disabled={busy}
-            onClick={async () => {
-              setBusy(true);
-              await api.dream().catch(() => {});
-              await load();
-              setBusy(false);
-            }}
+            onClick={() => void runMemoryAction(() => api.dream(lang))}
           >
             {busy ? <span className="spinner" /> : <IconRefresh width={14} height={14} />}
             <span>{busy ? t.reflecting : t.runDream}</span>
@@ -1442,7 +1497,8 @@ function MemoryView({ onBack }: { onBack: () => void }) {
             />
           </div>
 
-          <div className="doc-list">
+          <ContentStatus {...docsResource} onRetry={refreshLearnings} />
+          <div className="doc-list" aria-busy={docsResource.loading}>
             {docs.map((d) => (
               <button
                 key={d.sid}
@@ -1458,7 +1514,7 @@ function MemoryView({ onBack }: { onBack: () => void }) {
                 </div>
               </button>
             ))}
-            {docs.length === 0 && <div className="empty-small">{t.noCasesMatched}</div>}
+            {docs.length === 0 && !docsResource.loading && !docsResource.error && <div className="empty-small">{t.noCasesMatched}</div>}
           </div>
         </section>
 
@@ -1481,11 +1537,12 @@ function MemoryView({ onBack }: { onBack: () => void }) {
                 onClick={() => setActiveTab('doc')}
               >
                 <IconDocument width={13} height={13} />
-                <span>{selectedDoc ? selectedDoc.title.slice(0, 24) : t.tabDoc}</span>
+                <span>{selectedTitle ? selectedTitle.slice(0, 24) : t.tabDoc}</span>
               </button>
             )}
           </div>
 
+          {actionError && <div className="content-notice content-notice-error" role="alert">{t.memoryActionError}: {actionError}</div>}
           {activeTab === 'doc' && docSid ? (
             <div className="doc-report-wrapper">
               <div className="doc-back-bar">
@@ -1496,15 +1553,17 @@ function MemoryView({ onBack }: { onBack: () => void }) {
                 >
                   {t.backToLearningsBtn}
                 </button>
-                <span className="doc-report-name">{selectedDoc?.title}</span>
+                <span className="doc-report-name">{selectedTitle}</span>
               </div>
-              <div className="report-body">
+              <ContentStatus {...docResource} onRetry={() => setDocRevision((v) => v + 1)} />
+              <div className="report-body" aria-busy={docResource.loading}>
                 <Markdown text={docText} />
               </div>
             </div>
           ) : (
             <div className="learnings-wrapper">
               <h3 className="section-subhead">{t.candidateTitle}</h3>
+              <ContentStatus {...candidatesResource} onRetry={refreshLearnings} />
               <div className="candidate-list">
                 {candidates
                   .filter((c) => c.status === 'pending')
@@ -1515,37 +1574,34 @@ function MemoryView({ onBack }: { onBack: () => void }) {
                         <button
                           type="button"
                           className="btn btn-primary btn-sm"
-                          onClick={async () => {
-                            await api.reviewDream(c.id, 'approve');
-                            await load();
-                          }}
+                          disabled={busy || candidatesResource.loading}
+                          onClick={() => void runMemoryAction(() => api.reviewDream(c.id, 'approve'))}
                         >
                           {t.approveRule}
                         </button>
                         <button
                           type="button"
                           className="btn btn-secondary btn-sm"
-                          onClick={async () => {
-                            await api.reviewDream(c.id, 'reject');
-                            await load();
-                          }}
+                          disabled={busy || candidatesResource.loading}
+                          onClick={() => void runMemoryAction(() => api.reviewDream(c.id, 'reject'))}
                         >
                           {t.rejectRule}
                         </button>
                       </div>
                     </div>
                   ))}
-                {pendingCount === 0 && (
+                {pendingCount === 0 && !candidatesResource.loading && !candidatesResource.error && (
                   <div className="empty-small">{t.noCandidates}</div>
                 )}
               </div>
 
               <h3 className="section-subhead spaced">{t.approvedTitle}</h3>
+              <ContentStatus {...experienceResource} onRetry={refreshLearnings} />
               <ul className="experience-list">
                 {experience.map((eItem, i) => (
                   <li key={i}>{eItem}</li>
                 ))}
-                {experience.length === 0 && (
+                {experience.length === 0 && !experienceResource.loading && !experienceResource.error && (
                   <div className="empty-small">{t.noApprovedRules}</div>
                 )}
               </ul>
@@ -1555,6 +1611,23 @@ function MemoryView({ onBack }: { onBack: () => void }) {
       </div>
     </main>
   );
+}
+
+function ContentStatus({ loading, error, onRetry }: {
+  loading?: boolean;
+  error?: string;
+  onRetry?: () => void;
+}) {
+  const { t } = useI18n();
+  return <>
+    {loading && <div className="content-loading content-notice" role="status" aria-live="polite">
+      <span className="spinner" />{t.contentLoading}
+    </div>}
+    {!loading && error && <div className="content-notice content-notice-error" role="alert">
+      <span>{t.contentLoadError} {error}</span>
+      {onRetry && <button type="button" className="btn btn-secondary btn-sm" onClick={onRetry}>{t.contentRetry}</button>}
+    </div>}
+  </>;
 }
 
 function Markdown({ text }: { text: string }) {

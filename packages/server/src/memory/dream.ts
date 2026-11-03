@@ -1,6 +1,7 @@
 import type { LLMClient } from '@sparksleuth/core';
 import { Db } from '../db.js';
 import { MemoryStoreImpl } from './store.js';
+import { generationLanguage, type GenerationLanguage } from './localization.js';
 
 /**
  * Once a day, look back over recent sessions and propose lessons.
@@ -10,8 +11,10 @@ export async function runDream(
   db: Db,
   memory: MemoryStoreImpl,
   llm: LLMClient,
-  opts: { days?: number; maxSessions?: number } = {},
+  opts: { days?: number; maxSessions?: number; language?: GenerationLanguage } = {},
 ): Promise<{ candidates: number }> {
+  const savedLanguage = db.getPreference('dream.language');
+  const language = opts.language ?? (savedLanguage === 'en' ? 'en' : 'zh');
   const days = opts.days ?? 7;
   const docs = await memory.listDocuments(opts.maxSessions ?? 20);
   const cutoff = Date.now() - days * 86_400_000;
@@ -32,6 +35,7 @@ Extract reusable lessons: patterns that would change how a future investigation 
 Bad lessons are restatements of one incident ("the j1 job was slow"), obvious ("check the metrics"), or speculative.
 
 Return JSON only: {"lessons": ["...", "..."]} with at most 5 items, each under 200 characters. Return an empty array if nothing generalises.
+${generationLanguage(language)}
 
 --- SESSIONS ---
 ${bodies.join('\n\n').slice(0, 20_000)}`;

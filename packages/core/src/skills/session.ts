@@ -2,9 +2,36 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import type { Skill, ToolDefinition } from '../types.js';
 
+export interface SessionGraphTarget {
+  scope: 'application' | 'sql' | 'node' | 'stage';
+  appId: string;
+  sqlId?: number;
+  nodeId?: number;
+  stageId?: number;
+  attemptId?: number;
+}
+
+export function parseSessionGraphTarget(value: unknown): SessionGraphTarget | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  if (typeof v.appId !== 'string' || !v.appId.trim()) return undefined;
+  if (!['application', 'sql', 'node', 'stage'].includes(String(v.scope))) return undefined;
+  const target: SessionGraphTarget = { scope: v.scope as SessionGraphTarget['scope'], appId: v.appId };
+  for (const key of ['sqlId', 'nodeId', 'stageId', 'attemptId'] as const) {
+    if (v[key] !== undefined) {
+      if (!Number.isSafeInteger(v[key]) || Number(v[key]) < 0) return undefined;
+      target[key] = Number(v[key]);
+    }
+  }
+  if ((target.scope === 'sql' || target.scope === 'node') && target.sqlId === undefined) return undefined;
+  if (target.scope === 'node' && target.nodeId === undefined) return undefined;
+  if (target.scope === 'stage' && target.stageId === undefined) return undefined;
+  return target;
+}
+
 export interface SessionHooks {
   markPurpose(payload: { type: string; target?: string; desc: string }): Promise<void>;
-  reportFinding(payload: { stage: string; tools: string[]; finding: string }): Promise<void>;
+  reportFinding(payload: { stage: string; tools: string[]; finding: string; target?: SessionGraphTarget }): Promise<void>;
   saveReport(payload: { title: string; markdown: string }): Promise<{ path: string }>;
 }
 
@@ -72,6 +99,19 @@ export function createSessionSkill(hooks: SessionHooks): Skill {
           stage: { type: 'string', description: 'Phase label, e.g. "Phase 2: locate the slow stage"' },
           tools: { type: 'array', items: { type: 'string' }, description: 'Tools that produced this finding' },
           finding: { type: 'string', description: 'The conclusion, one or two sentences with numbers' },
+          target: {
+            type: 'object',
+            description: 'Optional graph location copied from actual tool evidence. Never guess IDs or infer topology.',
+            properties: {
+              scope: { type: 'string', enum: ['application', 'sql', 'node', 'stage'] },
+              appId: { type: 'string' },
+              sqlId: { type: 'integer', minimum: 0 },
+              nodeId: { type: 'integer', minimum: 0 },
+              stageId: { type: 'integer', minimum: 0 },
+              attemptId: { type: 'integer', minimum: 0 },
+            },
+            required: ['scope', 'appId'],
+          },
         },
         required: ['stage', 'finding'],
       },
@@ -80,6 +120,7 @@ export function createSessionSkill(hooks: SessionHooks): Skill {
           stage: String(input.stage ?? ''),
           tools: (input.tools as string[]) ?? [],
           finding: String(input.finding ?? ''),
+          target: parseSessionGraphTarget(input.target),
         });
         return { summary: `Finding recorded under "${input.stage}".` };
       },

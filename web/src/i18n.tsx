@@ -6,6 +6,27 @@ const STORAGE_KEY = 'sparksleuth_lang';
 
 export const translations = {
   zh: {
+    graphHighlightedFindings: '规则发现 · 点击定位',
+    tabGraph: '诊断图', graphApplication: '应用', graphSessionApplication: '会话应用',
+    graphLoading: '读取图快照…', graphRefresh: '采集 / 刷新', graphReload: '重新读取',
+    graphReadOnly: '已归档会话：仅浏览已保存快照，不采集或发送追问。',
+    graphMissing: '尚无已保存的图快照。', graphLoadError: '图快照加载失败', graphWrongApp: '快照与选定应用不匹配',
+    graphRetained: '保留上次成功读取的快照，以下数据可能不是最新。',
+    graphNoSnapshot: '尚无诊断图', graphNoSnapshotHint: '需要真实 History Server 图数据；缺失时不会生成或推测执行图。',
+    graphCaptured: '采集时间', graphSource: '数据来源 · History Server', graphSqlView: 'SQL 执行图', graphStageView: 'Stage 指标',
+    graphExecution: 'SQL execution', graphNoSql: '无 SQL execution', graphRootCause: '疑似根因', graphSymptom: '症状 / 资源压力', graphObservation: '观察',
+    graphSqlTrust: '仅显示接口返回的真实节点和有向边，不推断因果传播或 Stage 映射。',
+    graphStageTrust: '展示实际 Stage attempt 指标；仅明确且唯一的父 Stage 引用画边，不代表完整 DAG。',
+    graphTargetMissing: '该明确 ID 不在当前快照中，请手动选择；不会猜测节点。', graphAttemptAmbiguous: '此 Stage 包含多个 attempt，请手动选择。',
+    graphMissingEndpoints: '存在未返回的边端点；相关边未绘制。', graphStageParentsMissing: '部分父 Stage 缺失或 attempt 不唯一，未绘制对应边。',
+    graphMissingTopology: '此 SQL 未返回完整图拓扑。', graphNoSqlNodes: '当前 execution 未返回真实 SQL 图节点。', graphNoStages: '尚无 Stage attempt 指标。',
+    graphMetrics: '执行指标', graphNoMetrics: '接口未提供节点指标。', graphRawMetrics: '原始指标与归一化值', graphRuleEvidence: '规则与证据',
+    graphNoRules: '未命中规则；不代表绝对健康。', graphNoRulesShort: '未命中规则', graphEvidence: '证据',
+    graphFollowUpIntro: '请基于以下准确对象标识与证据继续诊断，区分疑似根因、症状和观察，不推测未证实的映射。',
+    graphFollowUp: '填入追问', graphConfirmSend: '仅填入聊天输入框，请审阅证据后自行确认发送。',
+    graphSelectNode: '选择节点查看原始指标、确定性规则与证据。', graphScopeFindings: '应用 / SQL 级发现（未绑定算子）',
+    graphPanHint: '拖拽平移 · 滚轮缩放', graphZoomOut: '缩小', graphZoomIn: '放大', graphFit: '适配',
+    graphCanvasLabel: '真实执行证据图，可选择节点', graphViewInGraph: '在图中查看',
     // Brand & Common
     brandName: 'SparkSleuth',
     brandSub: '性能诊断专家',
@@ -118,6 +139,11 @@ export const translations = {
     totalTokens: '总消耗 Tokens',
     resizerTooltip: '按住拖拽调整面板宽度 (双击恢复默认 420px)',
 
+    contentLoading: '正在加载内容…',
+    contentLoadError: '内容加载失败；如有已加载内容，将继续保留。',
+    contentRetry: '重试加载',
+    memoryActionError: '知识库操作失败',
+
     // Memory View
     memoryTitle: '诊断知识库与经验沉淀',
     memorySubtitle: '历史诊断案例归档与经过实战检验的永久规则库。',
@@ -173,6 +199,27 @@ export const translations = {
   },
 
   en: {
+    graphHighlightedFindings: 'Rule findings · select to locate',
+    tabGraph: 'Graph', graphApplication: 'Application', graphSessionApplication: 'Session application',
+    graphLoading: 'Loading snapshot…', graphRefresh: 'Capture / refresh', graphReload: 'Reload snapshot',
+    graphReadOnly: 'Archived session: saved snapshots only; capture and follow-ups are disabled.',
+    graphMissing: 'No saved graph snapshot is available.', graphLoadError: 'Graph snapshot failed', graphWrongApp: 'Snapshot does not match the selected application',
+    graphRetained: 'Keeping the last successful snapshot; the data below may be stale.',
+    graphNoSnapshot: 'No diagnostic graph yet', graphNoSnapshotHint: 'Real History Server graph data is required. Missing topology is never invented.',
+    graphCaptured: 'Captured', graphSource: 'Source · History Server', graphSqlView: 'SQL execution', graphStageView: 'Stage metrics',
+    graphExecution: 'SQL execution', graphNoSql: 'No SQL executions', graphRootCause: 'Suspected root cause', graphSymptom: 'Symptom / pressure', graphObservation: 'Observation',
+    graphSqlTrust: 'Only authentic nodes and directed edges. No inferred causal paths or Stage mappings.',
+    graphStageTrust: 'Actual Stage attempt metrics. Edges require explicit, uniquely resolved parents; this is not a complete DAG.',
+    graphTargetMissing: 'This explicit ID is missing from the snapshot. Select manually; no node is guessed.', graphAttemptAmbiguous: 'Multiple attempts match this Stage. Select an attempt manually.',
+    graphMissingEndpoints: 'Some edge endpoints were not returned; those edges are not drawn.', graphStageParentsMissing: 'Some parents are missing or have ambiguous attempts; corresponding edges are not drawn.',
+    graphMissingTopology: 'This SQL execution did not return complete graph topology.', graphNoSqlNodes: 'No authentic SQL graph nodes for this execution.', graphNoStages: 'No Stage attempt metrics available.',
+    graphMetrics: 'Execution metrics', graphNoMetrics: 'No metrics supplied for this node.', graphRawMetrics: 'Raw and normalized metrics', graphRuleEvidence: 'Rules and evidence',
+    graphNoRules: 'No rules triggered; this does not guarantee health.', graphNoRulesShort: 'No rules triggered', graphEvidence: 'Evidence',
+    graphFollowUpIntro: 'Continue diagnosis using these exact identifiers and evidence. Distinguish suspected root causes, symptoms and observations; do not invent unverified mappings.',
+    graphFollowUp: 'Prepare follow-up', graphConfirmSend: 'Draft only. Review the evidence in the composer and confirm sending yourself.',
+    graphSelectNode: 'Select a node to inspect metrics, deterministic rules and evidence.', graphScopeFindings: 'Application / SQL findings (not bound to operators)',
+    graphPanHint: 'Drag to pan · scroll to zoom', graphZoomOut: 'Zoom out', graphZoomIn: 'Zoom in', graphFit: 'Fit',
+    graphCanvasLabel: 'Authentic execution evidence graph with selectable nodes', graphViewInGraph: 'View in graph',
     // Brand & Common
     brandName: 'SparkSleuth',
     brandSub: 'Performance & Diagnostics',
@@ -284,6 +331,11 @@ export const translations = {
     completionTokens: 'Completion (Output)',
     totalTokens: 'Total Tokens',
     resizerTooltip: 'Drag to resize inspector width (double-click to reset 420px)',
+
+    contentLoading: 'Loading content…',
+    contentLoadError: 'Content could not be loaded. Previously loaded content is retained when available.',
+    contentRetry: 'Retry loading',
+    memoryActionError: 'Memory operation failed',
 
     // Memory View
     memoryTitle: 'Institutional Memory',

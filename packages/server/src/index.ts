@@ -9,7 +9,10 @@ import { HistoryClient } from '@sparksleuth/skills-spark';
 import { Db } from './db.js';
 import { MemoryStoreImpl } from './memory/store.js';
 import { runDream, scheduleDream } from './memory/dream.js';
+import { registerMemoryRoutes } from './memory/routes.js';
+import { languageBodySchema, type GenerationLanguage } from './memory/localization.js';
 import { SessionManager } from './session/manager.js';
+import { registerGraphRoutes, SessionGraphStore } from './session/graph.js';
 
 loadDotEnv();
 
@@ -218,10 +221,26 @@ app.get('/api/apps', async (_req, reply) => {
  * Sessions
  * ------------------------------------------------------------------ */
 
-app.post<{ Body: { message?: string; appId?: string } }>('/api/sessions', async (req, reply) => {
+const graphStore = new SessionGraphStore(config, db);
+registerGraphRoutes(app, graphStore);
+
+// Keep language as an enum-only schema: Ajv must not coerce non-string input
+// (for example ['zh']) into a valid preference before the run is started.
+const sessionMessageBodySchema = {
+  type: 'object',
+  properties: {
+    message: { type: 'string' },
+    appId: { type: 'string' },
+    language: { enum: ['zh', 'en'] },
+  },
+};
+
+app.post<{ Body: { message?: string; appId?: string; language?: 'zh' | 'en' } }>('/api/sessions', {
+  schema: { body: sessionMessageBodySchema },
+}, async (req, reply) => {
   const message = req.body?.message?.trim();
   if (!message) return reply.code(400).send({ error: 'message is required' });
-  const { sid } = await manager.create({ message, appId: req.body?.appId });
+  const { sid } = await manager.create({ message, appId: req.body?.appId, language: req.body?.language });
   return { sid };
 });
 
@@ -241,8 +260,10 @@ app.get('/api/sessions', async () => {
 app.get<{ Params: { sid: string } }>('/api/sessions/:sid', async (req, reply) => {
   const session = db.getSession(req.params.sid);
   if (!session) return reply.code(404).send({ error: 'not found' });
+  const findingEvents = manager.replay(session.sid).filter((event) => event.type === 'finding');
   return {
     session: {
+      appIds: graphStore.applicationIds(session),
       sid: session.sid,
       title: session.title,
       status: session.status,
@@ -250,7 +271,8 @@ app.get<{ Params: { sid: string } }>('/api/sessions/:sid', async (req, reply) =>
       createdAt: session.created_at,
     },
     events: manager.replay(session.sid),
-    findings: db.listFindings(session.sid).map((f) => ({
+    findings: db.listFindings(session.sid).map((f, index) => ({
+      target: findingEvents[index]?.type === 'finding' ? findingEvents[index].target : undefined,
       stage: f.stage,
       tools: JSON.parse(f.tools) as string[],
       finding: f.finding,
@@ -261,12 +283,14 @@ app.get<{ Params: { sid: string } }>('/api/sessions/:sid', async (req, reply) =>
   };
 });
 
-app.post<{ Params: { sid: string }; Body: { message?: string } }>('/api/sessions/:sid/messages', async (req, reply) => {
+app.post<{ Params: { sid: string }; Body: { message?: string; language?: 'zh' | 'en' } }>('/api/sessions/:sid/messages', {
+  schema: { body: sessionMessageBodySchema },
+}, async (req, reply) => {
   const message = req.body?.message?.trim();
   if (!message) return reply.code(400).send({ error: 'message is required' });
   if (!db.getSession(req.params.sid)) return reply.code(404).send({ error: 'not found' });
   try {
-    await manager.continue(req.params.sid, message);
+    await manager.continue(req.params.sid, message, req.body?.language);
     return { ok: true };
   } catch (err) {
     return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
@@ -277,9 +301,12 @@ app.post<{ Params: { sid: string } }>('/api/sessions/:sid/cancel', async (req) =
   return { ok: manager.cancel(req.params.sid) };
 });
 
-app.post<{ Params: { sid: string } }>('/api/sessions/:sid/finish', async (req, reply) => {
+app.post<{ Params: { sid: string }; Body: { language?: GenerationLanguage } }>('/api/sessions/:sid/finish', {
+  schema: { body: languageBodySchema },
+  preValidation: async (req) => { if (req.body === undefined) req.body = {}; },
+}, async (req, reply) => {
   try {
-    const result = await manager.finish(req.params.sid);
+    const result = await manager.finish(req.params.sid, req.body?.language);
     return result;
   } catch (err) {
     return reply.code(409).send({ error: err instanceof Error ? err.message : String(err) });
@@ -288,6 +315,7 @@ app.post<{ Params: { sid: string } }>('/api/sessions/:sid/finish', async (req, r
 
 app.get<{ Params: { sid: string; file: string } }>('/api/sessions/:sid/reports/:file', async (req, reply) => {
   try {
+    // Viewing always returns the saved source, regardless of legacy language query parameters.
     const text = await manager.readReport(req.params.sid, req.params.file);
     return reply.type('text/markdown').send(text);
   } catch {
@@ -299,50 +327,7 @@ app.get<{ Params: { sid: string; file: string } }>('/api/sessions/:sid/reports/:
  * Memory
  * ------------------------------------------------------------------ */
 
-app.get<{ Querystring: { keyword?: string; days?: string; limit?: string } }>('/api/memory', async (req) => {
-  const hits = await memory.search({
-    keyword: req.query.keyword,
-    days: req.query.days ? Number(req.query.days) : undefined,
-    limit: req.query.limit ? Number(req.query.limit) : 20,
-  });
-  return hits;
-});
-
-app.get<{ Params: { sid: string } }>('/api/memory/:sid', async (req, reply) => {
-  const doc = await memory.get(req.params.sid);
-  if (!doc) return reply.code(404).send({ error: 'not found' });
-  return reply.type('text/markdown').send(doc);
-});
-
-app.get('/api/memory/experience', async () => {
-  return { items: await memory.experience() };
-});
-
-app.post('/api/memory/dream', async () => {
-  const result = await runDream(db, memory, llm);
-  return result;
-});
-
-app.get<{ Querystring: { status?: string } }>('/api/memory/dream/candidates', async (req) => {
-  return db.listDreamCandidates(req.query.status);
-});
-
-app.post<{ Params: { id: string }; Body: { action?: 'approve' | 'reject' } }>(
-  '/api/memory/dream/candidates/:id',
-  async (req, reply) => {
-    const id = Number(req.params.id);
-    const candidates = db.listDreamCandidates().filter((c) => c.id === id);
-    const candidate = candidates[0];
-    if (!candidate) return reply.code(404).send({ error: 'not found' });
-    if (req.body?.action === 'approve') {
-      const path = await memory.promoteLesson([candidate.content], 'lessons');
-      db.reviewDreamCandidate(id, 'approved');
-      return { ok: true, path };
-    }
-    db.reviewDreamCandidate(id, 'rejected');
-    return { ok: true };
-  },
-);
+registerMemoryRoutes(app, db, memory, () => llm);
 
 /* ------------------------------------------------------------------ *
  * WebSocket: live events

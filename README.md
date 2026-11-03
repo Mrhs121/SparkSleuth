@@ -22,6 +22,14 @@
 
 ![Investigation Workspace](<docs/screenshots/04_diagnostic_session.png>)
 
+### Authentic SQL DAG & Node Evidence
+
+![Authentic SQL diagnostic DAG](<docs/screenshots/07_diagnostic_dag.png>)
+
+![Selected Join node and localized diagnostic evidence](<docs/screenshots/08_dag_node_evidence.png>)
+
+The graph preserves actual History Server node IDs and directed edges. Rule highlights are suspected causes or observations—not fabricated causal paths.
+
 ### Searchable Application Selector
 
 ![Searchable Application Selector](<docs/screenshots/02_app_select_dropdown.png>)
@@ -39,10 +47,11 @@
 ![Case Report & Deep Dive](<docs/screenshots/06_memory_investigation_doc.png>)
 
 - **Evidence-Driven Investigation Workspace**: The agent conducts autonomous step-by-step investigations with transparent reasoning traces, tool call groupings, and an interactive Inspector with draggable widths.
+- **Diagnostic Graphs**: Inspect authentic SQL nodes and edges from Spark History Server, with suspected-cause and Stage-pressure annotations, pan/zoom, evidence inspection, and node follow-ups. Session snapshots remain readable offline; missing topology and uncertain mappings are explicit.
 - **Searchable Application Selector**: Fuzzy-search live and completed applications directly from Spark History Server with status badges and execution metrics.
 - **Visual System Configuration**: Configure Spark History Server URLs, LLM model gateways, API keys, and security tokens directly from the UI with real-time connectivity and latency ping.
 - **Long-Term Memory & Auto-Dream**: Tri-level memory architecture that stores case reports and distills candidate rules with human-in-the-loop review (Approve / Reject) and instant tab navigation.
-- **Full Bilingual Support**: Default Chinese (`zh`) interface with instant English (`en`) toggling via the top-right button, persisted across sessions.
+- **Full Bilingual Support**: Chinese (`zh`) and English (`en`) UI, localized diagnostic rules, language-aware model replies and memory generation. Reports and reviewed/candidate lessons keep the language used when generated and saved. Viewing them never invokes translation or rewrites existing content.
 
 ---
 

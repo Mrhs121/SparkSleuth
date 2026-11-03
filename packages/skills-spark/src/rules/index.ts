@@ -212,6 +212,7 @@ const joinExplosion: Rule = {
           evidence: {
             sqlId: sql.id,
             operator: join.name,
+            ...(join.nodeId !== undefined ? { nodeId: join.nodeId } : {}),
             joinOutputRows: count(outRows),
             largestInputRows: count(maxInput),
             totalInputRows: count(totalInput),
@@ -256,6 +257,7 @@ const bnlj: Rule = {
           evidence: {
             sqlId: sql.id,
             operator: n.name,
+            ...(n.nodeId !== undefined ? { nodeId: n.nodeId } : {}),
             outputRows: count(n.metrics['number of output rows'] ?? 0),
             sqlDuration: duration(sql.durationMs),
           },
@@ -465,7 +467,7 @@ const smallFiles: Rule = {
           severity: files >= 5000 ? 'P1' : 'P2',
           title: `SQL ${sql.id}: ${count(files)} files averaging ${bytes(avg)}`,
           scope: { sqlId: sql.id },
-          evidence: { sqlId: sql.id, files: count(files), totalSize: bytes(size), averageFileSize: bytes(avg) },
+          evidence: { sqlId: sql.id, ...(n.nodeId !== undefined ? { nodeId: n.nodeId } : {}), files: count(files), totalSize: bytes(size), averageFileSize: bytes(avg) },
           possibleCauses: ['too many output partitions upstream', 'frequent small appends'],
           suggestions: ['compact the table', 'reduce write partitions', 'enable automatic compaction on the target format'],
         });

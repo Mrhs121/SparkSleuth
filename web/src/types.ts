@@ -1,3 +1,5 @@
+import type { GraphTarget } from './graph.ts';
+
 export interface SessionSummary {
   sid: string;
   title: string;
@@ -20,10 +22,11 @@ export interface Finding {
   tools: string[];
   finding: string;
   ts: number;
+  target?: GraphTarget;
 }
 
 export interface SessionDetail {
-  session: { sid: string; title: string; status: string; purpose: string | null; createdAt: number };
+  session: { sid: string; title: string; status: string; purpose: string | null; createdAt: number; appId?: string; appIds?: string[] };
   events: RemEvent[];
   findings: Finding[];
   reports: string[];

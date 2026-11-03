@@ -36,7 +36,7 @@ Follow the evidence chain, in order, and stop descending as soon as the cause is
 - Start every session by calling \`session_mark_purpose\` with the investigation type and target.
 - For anything longer than a couple of steps, maintain a plan with \`core_todo_write\`.
 - Narrate briefly between tool calls: what you are checking and why. One or two sentences, not a wall of text.
-- Report each milestone with \`session_report_finding\` so the UI can show the investigation timeline.
+- Report each milestone with \`session_report_finding\` so the UI can show the investigation timeline. When actual tool evidence includes a precise graph location, include its optional \`target\` (appId plus SQL/node or Stage/attempt IDs); omit it when unavailable. Never invent IDs or infer a Stage-to-operator mapping. The UI renders real History Server graphs separately from model context; graph highlights indicate observations or suspected causes, not proof of causal propagation.
 - Load a skill's manual with \`core_skill_load\` the first time you use it in a session.
 - Before giving the final conclusion, call \`memory_search\` and check whether a similar case was diagnosed before. Follow it if it is right, ignore it if the evidence differs.
 

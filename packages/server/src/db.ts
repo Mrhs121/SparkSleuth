@@ -104,6 +104,10 @@ export class Db {
         app_ids TEXT NOT NULL DEFAULT '[]',
         rules TEXT NOT NULL DEFAULT '[]'
       );
+      CREATE TABLE IF NOT EXISTS local_preferences (
+        preference_key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
       CREATE TABLE IF NOT EXISTS dream_candidates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         date TEXT NOT NULL,
@@ -213,6 +217,14 @@ export class Db {
     this.db
       .prepare('UPDATE dream_candidates SET status = ?, reviewed_at = ? WHERE id = ?')
       .run(status, Date.now(), id);
+  }
+
+  getPreference(key: string): string | undefined {
+    return (this.db.prepare('SELECT value FROM local_preferences WHERE preference_key = ?').get(key) as { value: string } | undefined)?.value;
+  }
+
+  setPreference(key: string, value: string): void {
+    this.db.prepare('INSERT OR REPLACE INTO local_preferences (preference_key, value) VALUES (?, ?)').run(key, value);
   }
 
   close(): void {

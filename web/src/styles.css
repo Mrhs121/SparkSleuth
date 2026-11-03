@@ -2765,3 +2765,87 @@ code {
   background: #f8fafc;
   font-weight: 650;
 }
+
+/* Diagnostic graph: evidence-first, responsive to the existing inspector splitter. */
+.inspector .tabs { overflow-x: auto; flex-shrink: 0; }
+.inspector .tabs button { white-space: nowrap; flex-shrink: 0; }
+.inspector-graph-body { padding: 16px; }
+.graph-panel[hidden] { display: none; }
+.graph-panel { min-width: 0; font-size: 12px; }
+.graph-controls { display: flex; gap: 8px; align-items: flex-end; }
+.graph-controls label { flex: 1; min-width: 0; color: var(--muted); font-size: 11px; }
+.graph-panel select { display: block; width: 100%; padding: 8px; border: 1px solid var(--line-strong); border-radius: 7px; color: var(--ink-secondary); background: var(--panel); font: inherit; margin-top: 4px; text-overflow: ellipsis; }
+.graph-controls .btn { font-size: 11px; padding: 8px; white-space: nowrap; }
+.graph-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin: 12px 0 5px; }
+.graph-source { color: var(--muted); font-size: 10px; margin-bottom: 12px; overflow-wrap: anywhere; }
+.graph-view-switch { display: flex; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 3px; gap: 3px; }
+.graph-view-switch button { flex: 1; padding: 6px; font-size: 12px; border-radius: 5px; color: var(--muted); }
+.graph-view-switch button.active { background: var(--panel); color: var(--ink); box-shadow: 0 1px 4px #0f172a14; font-weight: 600; }
+.graph-execution { display: block; margin-top: 10px; font-size: 11px; color: var(--muted); }
+.graph-caption { color: var(--muted); font-size: 11px; line-height: 1.65; margin: 8px 0; }
+.graph-legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 10px; margin: 12px 0 0; }
+.graph-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.graph-legend span::before { content: ''; width: 7px; height: 7px; background: #94a3b8; border-radius: 50%; }
+.graph-legend .root_cause::before { background: var(--err); }
+.graph-legend .symptom::before { background: var(--warn); }
+.graph-notice, .graph-error { border-radius: 7px; padding: 9px 10px; margin: 8px 0; line-height: 1.6; font-size: 11px; overflow-wrap: anywhere; }
+.graph-notice { background: var(--accent-soft); color: #9a3412; border: 1px solid var(--accent-border); }
+.graph-error { background: var(--err-soft); color: var(--err); border: 1px solid #fecaca; }
+.graph-empty { padding: 28px 14px; margin: 14px 0; text-align: center; background: var(--bg); border: 1px dashed var(--line-strong); border-radius: 10px; color: var(--muted); }
+.graph-empty p { font-size: 11px; }
+.graph-canvas-wrap { border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--bg); }
+.graph-canvas-toolbar { display: flex; align-items: center; gap: 5px; padding: 7px; font-size: 10px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--muted); }
+.graph-canvas-toolbar > span:first-child { flex: 1; }
+.graph-canvas-toolbar button { border: 1px solid var(--line); border-radius: 5px; padding: 2px 7px; color: var(--ink-secondary); font-weight: 600; }
+.graph-canvas-toolbar button:hover { background: var(--accent-soft); }
+.graph-canvas { display: block; width: 100%; height: clamp(280px, 40vh, 500px); touch-action: none; cursor: grab; background-image: radial-gradient(#cbd5e1 0.7px, transparent 0.7px); background-size: 16px 16px; }
+.graph-canvas:active { cursor: grabbing; }
+.graph-edge { fill: none; stroke: #94a3b8; stroke-width: 1.7; }
+.graph-node { cursor: pointer; outline: none; }
+.graph-node rect { fill: var(--panel); stroke: var(--line-strong); stroke-width: 1.5; filter: drop-shadow(0 2px 2px #0f172a0d); }
+.graph-node.root_cause rect { fill: #fff5f5; stroke: #f87171; }
+.graph-node.symptom rect { fill: #fffbeb; stroke: #fbbf24; }
+.graph-node.selected rect, .graph-node:focus rect { stroke: var(--accent); stroke-width: 3; }
+.graph-node-title { fill: var(--ink); font-size: 12px; font-weight: 600; }
+.graph-node-id { fill: var(--muted); font-family: var(--mono); font-size: 10px; }
+.graph-node-badge { fill: var(--muted); font-size: 10px; }
+.graph-node.root_cause .graph-node-badge { fill: var(--err); }
+.graph-node.symptom .graph-node-badge { fill: var(--warn); }
+.graph-evidence { margin-top: 14px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+.graph-evidence-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+.graph-evidence-header strong { overflow-wrap: anywhere; }
+.graph-evidence-header button { font-size: 18px; color: var(--muted); line-height: 1; }
+.graph-panel h4 { margin: 12px 0 6px; font-size: 11px; color: var(--ink-secondary); }
+.graph-target { background: var(--bg); padding: 8px; border-radius: 6px; margin-top: 8px; font-size: 10px; }
+.graph-metrics { margin: 0; }
+.graph-metrics > div { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; padding: 5px 0; border-bottom: 1px solid var(--line); }
+.graph-metrics dt { color: var(--muted); overflow-wrap: anywhere; }
+.graph-metrics dd { margin: 0; text-align: right; font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+.graph-panel details { font-size: 11px; }
+.graph-panel details summary { cursor: pointer; }
+.graph-panel details pre { font-size: 10px; max-height: 260px; overflow: auto; margin-top: 8px; padding: 8px; background: var(--bg); }
+.graph-annotation { border-left: 3px solid var(--line-strong); padding: 9px; margin: 8px 0; background: var(--bg); border-radius: 0 7px 7px 0; }
+.graph-annotation.root_cause { border-color: var(--err); background: #fff5f5; }
+.graph-annotation.symptom { border-color: var(--warn); background: #fffbeb; }
+.graph-annotation p { margin: 6px 0; overflow-wrap: anywhere; }
+.graph-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; font-size: 9px; color: var(--muted); }
+.graph-badges span { border: 1px solid var(--line); border-radius: 4px; padding: 1px 4px; background: var(--panel); }
+.graph-annotation.root_cause .graph-badges { color: var(--err); }
+.graph-annotation.symptom .graph-badges { color: var(--warn); }
+.graph-followup { margin-top: 12px; width: 100%; justify-content: center; }
+.graph-followup:disabled { opacity: 0.5; cursor: not-allowed; }
+.graph-select-hint { text-align: center; padding: 8px; }
+.graph-timeline-link { display: inline-flex; margin: 7px 0; font-size: 11px; color: var(--accent); padding: 3px 8px; background: var(--accent-soft); border: 1px solid var(--accent-border); border-radius: 5px; }
+
+.graph-findings-list { margin: 10px 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; }
+.graph-findings-list > summary { font-weight: 600; color: var(--ink-secondary); }
+.graph-finding-jump { display: flex; gap: 8px; width: 100%; text-align: left; padding: 8px 4px; border-top: 1px solid var(--line); margin-top: 5px; }
+.graph-finding-jump:hover { background: var(--bg); }
+.graph-finding-jump > span:last-child { min-width: 0; }
+.graph-finding-jump small { display: block; font-size: 9px; color: var(--muted); overflow-wrap: anywhere; }
+.graph-finding-severity { font: 10px var(--mono); color: var(--muted); padding-top: 3px; }
+.graph-finding-jump.root_cause .graph-finding-severity { color: var(--err); }
+.graph-finding-jump.symptom .graph-finding-severity { color: var(--warn); }
+
+.content-notice { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--muted); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.content-notice-error { color: var(--err); background: var(--err-soft); flex-wrap: wrap; }

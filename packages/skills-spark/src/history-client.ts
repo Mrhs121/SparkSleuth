@@ -54,6 +54,8 @@ export interface StageSummary {
   shuffleWriteRecords?: number;
   memoryBytesSpilled?: number;
   diskBytesSpilled?: number;
+  /** Present only on sources that explicitly expose stage topology. */
+  parentIds?: number[];
 }
 
 export interface QuantileRow {
@@ -127,6 +129,7 @@ export interface SqlExecution {
   successJobIds?: number[];
   failedJobIds?: number[];
   nodes?: SqlNode[];
+  edges?: Array<{ fromId: number; toId: number }>;
   planDescription?: string;
 }
 
@@ -236,10 +239,11 @@ export class HistoryClient {
     return (await this.get<ExecutorSummary[]>(`/applications/${encodeURIComponent(appId)}/${path}`)) ?? [];
   }
 
-  async getSqlList(appId: string): Promise<SqlExecution[]> {
+  async getSqlList(appId: string, strict = false): Promise<SqlExecution[]> {
     try {
       return (await this.get<SqlExecution[]>(`/applications/${encodeURIComponent(appId)}/sql`)) ?? [];
-    } catch {
+    } catch (error) {
+      if (strict) throw error;
       return [];
     }
   }

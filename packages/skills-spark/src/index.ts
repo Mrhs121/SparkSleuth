@@ -96,6 +96,8 @@ export const sparkSkills: Skill[] = [sparkHistorySkill, sparkDiagnoseSkill];
 export { HistoryClient, parseSparkTime, stageDuration, appDuration, isRunning } from './history-client.js';
 export type { SparkApplication, StageSummary, ExecutorSummary, SqlExecution, TaskRow, QuantileRow, JobSummary } from './history-client.js';
 export { collectFacts } from './facts.js';
+export { collectGraphSnapshot, normalizeGraphSnapshot } from './graph.js';
+export type { GraphSnapshot, GraphSqlExecution, GraphNode, GraphStage, GraphMetric, GraphAnnotation, GraphTarget } from './graph.js';
 export type { AppFacts, StageFacts, SqlFacts, PlanNodeFacts } from './facts.js';
 export { runRules, allRules } from './rules/index.js';
 export type { Finding, Rule, Severity, Thresholds } from './rules/index.js';

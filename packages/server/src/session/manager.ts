@@ -19,6 +19,17 @@ import {
 import { sparkSkills } from '@sparksleuth/skills-spark';
 import { Db } from '../db.js';
 import { MemoryStoreImpl } from '../memory/store.js';
+import { generationLanguage } from '../memory/localization.js';
+import { SessionGraphStore } from './graph.js';
+
+export type ResponseLanguage = 'zh' | 'en';
+
+/** Per-turn UI preference; omit entirely for legacy clients. */
+function languagePromptSuffix(language?: ResponseLanguage): string {
+  if (!language) return '';
+  const name = language === 'zh' ? 'Simplified Chinese (简体中文)' : 'English';
+  return `\n\n## Response language for this turn\n\nThe user interface language is ${name}. Write all user-facing explanations and model-authored prose in ${name}, including narration, findings, purpose descriptions, report titles and report Markdown. This explicit UI preference overrides the earlier "Answer in the user's language" rule and the language of the user's message, prior conversation, memories or tool output. Keep code, technical identifiers, tool names and exact quoted evidence unchanged when needed. Apply this preference throughout this turn; do not translate previously saved messages or reports.`;
+}
 
 export interface EmittedEvent {
   type: string;
@@ -45,10 +56,13 @@ interface ActiveRun {
  */
 export class SessionManager {
   private llm: LLMClient;
+  private readonly graphStore: SessionGraphStore;
   private readonly runs = new Map<string, ActiveRun>();
   private readonly subscribers = new Map<string, Set<(e: EmittedEvent) => void>>();
   private readonly textBuffers = new Map<string, string>();
   private readonly thinkingBuffers = new Map<string, string>();
+  private readonly graphToolApps = new Map<string, string[]>();
+  private readonly graphApps = new Map<string, Set<string>>();
 
   constructor(
     private readonly config: Config,
@@ -56,6 +70,7 @@ export class SessionManager {
     private readonly memory: MemoryStoreImpl,
   ) {
     this.llm = new LLMClient(config.llm);
+    this.graphStore = new SessionGraphStore(config, db);
   }
 
   workspace(sid: string): string {
@@ -69,7 +84,7 @@ export class SessionManager {
     this.llm = new LLMClient(this.config.llm);
   }
 
-  async create(input: { message: string; appId?: string }): Promise<{ sid: string }> {
+  async create(input: { message: string; appId?: string; language?: ResponseLanguage }): Promise<{ sid: string }> {
     if (this.runs.size >= this.config.runtime.concurrency) {
       throw new Error(
         `Concurrency limit reached (${this.config.runtime.concurrency} active runs). Please wait for an existing session to finish or stop one.`,
@@ -82,7 +97,7 @@ export class SessionManager {
     this.db.updateSession(sid, { app_ids: JSON.stringify(input.appId ? [input.appId] : []) });
 
     // Fire and forget: the client follows progress over the websocket.
-    void this.run(sid, this.firstTurn(input));
+    void this.run(sid, this.firstTurn(input), input.language);
     return { sid };
   }
 
@@ -92,7 +107,7 @@ export class SessionManager {
       : input.message;
   }
 
-  async continue(sid: string, message: string): Promise<void> {
+  async continue(sid: string, message: string, language?: ResponseLanguage): Promise<void> {
     const session = this.db.getSession(sid);
     if (!session) throw new Error(`Unknown session ${sid}`);
     if (session.status === 'closed') {
@@ -104,10 +119,10 @@ export class SessionManager {
         `Concurrency limit reached (${this.config.runtime.concurrency} active runs). Please wait for an existing session to finish or stop one.`,
       );
     }
-    void this.run(sid, message);
+    void this.run(sid, message, language);
   }
 
-  private async run(sid: string, userMessage: string): Promise<void> {
+  private async run(sid: string, userMessage: string, language?: ResponseLanguage): Promise<void> {
     const session = this.db.getSession(sid);
     if (!session) throw new Error(`Unknown session ${sid}`);
     if (session.status === 'closed') throw new Error(`Session ${sid} is closed and cannot be run.`);
@@ -116,6 +131,7 @@ export class SessionManager {
     const active: ActiveRun = { abort, messages: [], usage: { input: 0, output: 0 } };
     this.runs.set(sid, active);
     this.db.updateSession(sid, { status: 'running' });
+    if (language) this.db.setPreference(`session.language:${sid}`, language);
 
     let timeoutTimer: NodeJS.Timeout | undefined;
     if (this.config.runtime.sessionTimeoutMs > 0) {
@@ -167,7 +183,7 @@ export class SessionManager {
         now: new Date().toISOString(),
         memories: memories.map((m) => `${m.title} (${m.date.slice(0, 10)}): ${m.desc}`),
         experience,
-      });
+      }) + languagePromptSuffix(language);
 
       const agent = new Agent(this.llm, registry, this.config);
       const result = await agent.run({
@@ -193,6 +209,24 @@ export class SessionManager {
         return;
       }
 
+      // Archive graphs even if no browser is connected; graph failures must not
+      // change the diagnostic outcome or discard the report.
+      for (const appId of this.graphApps.get(sid) ?? []) {
+        if (abort.signal.aborted) break;
+        try {
+          await this.graphStore.refresh(sid, appId);
+          this.emit(sid, { type: 'graph_available', appId, snapshotSaved: true });
+        } catch (err) {
+          this.emit(sid, { type: 'graph_error', appId, message: err instanceof Error ? err.message : String(err) });
+        }
+      }
+      if (abort.signal.aborted) {
+        if (this.db.getSession(sid)?.status !== 'cancelled') {
+          this.db.updateSession(sid, { status: 'cancelled' });
+          this.emit(sid, { type: 'cancelled' });
+        }
+        return;
+      }
       this.db.updateSession(sid, { status: 'waiting', last_message: this.lastAssistantText(result.messages) });
       this.emit(sid, { type: 'done', reason: result.reason, usage: result.usage });
     } catch (err) {
@@ -216,6 +250,10 @@ export class SessionManager {
     } finally {
       if (timeoutTimer) clearTimeout(timeoutTimer);
       this.runs.delete(sid);
+      this.graphApps.delete(sid);
+      for (const key of this.graphToolApps.keys()) {
+        if (key.startsWith(`${sid}:`)) this.graphToolApps.delete(key);
+      }
     }
   }
 
@@ -239,6 +277,30 @@ export class SessionManager {
       case 'usage':
         this.emit(sid, { type: 'usage', usage: e.usage });
         return;
+      case 'tool_use': {
+        if (e.skill === 'spark-history' || e.skill === 'spark-diagnose') {
+          const appIds = [e.input.appId, e.input.baselineAppId, e.input.experimentAppId]
+            .filter((v): v is string => typeof v === 'string' && v.length > 0);
+          this.graphToolApps.set(`${sid}:${e.id}`, [...new Set(appIds)]);
+        }
+        this.emit(sid, { ...e });
+        return;
+      }
+      case 'tool_result': {
+        this.emit(sid, { ...e });
+        const key = `${sid}:${e.id}`;
+        const appIds = this.graphToolApps.get(key) ?? [];
+        this.graphToolApps.delete(key);
+        if (!e.isError) {
+          const apps = this.graphApps.get(sid) ?? new Set<string>();
+          for (const appId of appIds) {
+            apps.add(appId);
+            this.emit(sid, { type: 'graph_available', appId });
+          }
+          this.graphApps.set(sid, apps);
+        }
+        return;
+      }
       default:
         this.emit(sid, { ...e } as unknown as Record<string, unknown>);
     }
@@ -364,7 +426,7 @@ export class SessionManager {
    * Session wrap-up: summarise into the memory index.
    * ------------------------------------------------------------------ */
 
-  async finish(sid: string): Promise<{ ok: boolean; summary?: SessionSummary }> {
+  async finish(sid: string, language?: ResponseLanguage): Promise<{ ok: boolean; summary?: SessionSummary }> {
     const session = this.db.getSession(sid);
     if (!session) throw new Error(`Unknown session ${sid}`);
     if (session.status === 'closed') {
@@ -385,7 +447,8 @@ export class SessionManager {
     const transcript = this.buildTranscript(events, findings);
     let summary: SessionSummary;
     try {
-      summary = await this.summarise(transcript);
+      const savedLanguage = this.db.getPreference(`session.language:${sid}`);
+      summary = await this.summarise(transcript, language ?? (savedLanguage === 'zh' || savedLanguage === 'en' ? savedLanguage : undefined));
     } catch {
       summary = {
         title: session.title,
@@ -425,13 +488,14 @@ export class SessionManager {
     return lines.join('\n').slice(-24_000);
   }
 
-  private async summarise(transcript: string): Promise<SessionSummary> {
+  private async summarise(transcript: string, language?: ResponseLanguage): Promise<SessionSummary> {
     const prompt = `Summarise this Spark diagnostic session for a memory index.
 
 Return JSON only, no prose:
 {"title": "short title, max 40 chars", "tags": ["3-6 lowercase tags"], "description": "one sentence, max 100 chars", "document": "markdown write-up, max 60 lines, sections: Background / Conclusion / Path taken / Dead ends and corrections / Reusable lessons"}
 
 The document must state what was actually observed, not what was assumed.
+${generationLanguage(language)}
 
 --- TRANSCRIPT ---
 ${transcript}`;

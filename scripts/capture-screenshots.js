@@ -1,163 +1,79 @@
-import { spawn } from 'node:child_process';
-import { writeFileSync, mkdirSync } from 'node:fs';
+// Connect to a managed headless Chrome started with --remote-debugging-port=9223.
+// Run from the repository root: node scripts/capture-screenshots.js
+import { mkdir, writeFile } from 'node:fs/promises';
 
-mkdirSync('docs/screenshots', { recursive: true });
-
-async function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function main() {
-  console.log('Starting headless Chrome...');
-  const chromeProc = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
-    '--headless=new',
-    '--remote-debugging-port=9222',
-    '--user-data-dir=/tmp/chrome-ss-clean-2',
-    '--window-size=1440,900',
-    '--disable-gpu',
-    '--no-first-run',
-    '--no-default-browser-check',
-    'about:blank',
-  ], { stdio: 'ignore' });
-
-  let versionData = null;
-  for (let i = 0; i < 30; i++) {
-    try {
-      const res = await fetch('http://127.0.0.1:9222/json/version');
-      if (res.ok) {
-        versionData = await res.json();
-        break;
-      }
-    } catch {}
-    await sleep(200);
-  }
-
-  if (!versionData) {
-    chromeProc.kill();
-    throw new Error('Failed to connect to Chrome remote debugging port.');
-  }
-
-  const pagesRes = await fetch('http://127.0.0.1:9222/json/list');
-  const pages = await pagesRes.json();
-  const targetPage = pages.find((p) => p.type === 'page') || pages[0];
-  const wsUrl = targetPage.webSocketDebuggerUrl;
-
-  const ws = new WebSocket(wsUrl);
-  let msgId = 1;
-  const pending = new Map();
-
-  ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    if (data.id && pending.has(data.id)) {
-      const { resolve, reject } = pending.get(data.id);
-      pending.delete(data.id);
-      if (data.error) reject(data.error);
-      else resolve(data.result);
-    }
-  };
-
-  await new Promise((res, rej) => {
-    ws.onopen = res;
-    ws.onerror = rej;
+const baseUrl = process.env.SPARKSLEUTH_SCREENSHOT_URL || 'http://127.0.0.1:8787';
+const debugUrl = process.env.SPARKSLEUTH_CHROME_DEBUG_URL || 'http://127.0.0.1:9223';
+const pages = await (await fetch(`${debugUrl}/json/list`)).json();
+const page = pages.find((p) => p.type === 'page');
+if (!page) throw new Error('Start managed Chrome with a page and remote debugging first.');
+const ws = new WebSocket(page.webSocketDebuggerUrl);
+await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+let id = 0;
+const pending = new Map();
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  if (!data.id) return;
+  const request = pending.get(data.id);
+  if (!request) return;
+  pending.delete(data.id);
+  if (data.error) request.reject(new Error(JSON.stringify(data.error)));
+  else request.resolve(data.result);
+};
+function send(method, params = {}) {
+  return new Promise((resolve, reject) => {
+    const n = ++id; pending.set(n, { resolve, reject });
+    ws.send(JSON.stringify({ id: n, method, params }));
   });
-
-  function send(method, params = {}) {
-    const id = msgId++;
-    return new Promise((resolve, reject) => {
-      pending.set(id, { resolve, reject });
-      ws.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async function evaluate(expression) {
-    const res = await send('Runtime.evaluate', {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    return res.result?.value;
-  }
-
-  async function takeScreenshot(outputPath) {
-    const res = await send('Page.captureScreenshot', { format: 'png' });
-    const buffer = Buffer.from(res.data, 'base64');
-    writeFileSync(outputPath, buffer);
-    console.log(`Saved screenshot: ${outputPath} (${buffer.length} bytes)`);
-  }
-
+}
+async function evaluate(expression) {
+  const response = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
+  if (response.exceptionDetails) throw new Error(JSON.stringify(response.exceptionDetails));
+  return response.result?.value;
+}
+async function ui(body) {
+  return evaluate(`(async()=>{const buttons=()=>[...document.querySelectorAll('button')]; const until=async(fn)=>{for(let i=0;i<1500;i++){const result=fn();if(result)return result;await new Promise(r=>setTimeout(r,100));}throw new Error('UI condition timed out');}; ${body} })()`);
+}
+async function screenshot(name) {
+  await evaluate('document.fonts.ready');
+  const shot = await send('Page.captureScreenshot', { format: 'png' });
+  const buffer = Buffer.from(shot.data, 'base64');
+  await writeFile(`docs/screenshots/${name}.png`, buffer);
+  console.log(`${name}: ${buffer.length} bytes`);
+}
+async function home() {
+  await send('Page.navigate', { url: baseUrl });
+  await ui(`await until(()=>document.querySelector('.app-select-trigger'));`);
+}
+try {
+  await mkdir('docs/screenshots', { recursive: true });
   await send('Page.enable');
-  await send('DOM.enable');
-  await send('Runtime.enable');
-  await send('Emulation.setDeviceMetricsOverride', {
-    width: 1440,
-    height: 900,
-    deviceScaleFactor: 2,
-    mobile: false,
-  });
-
-  // 1. Home Launcher View
-  console.log('1. Capturing Home Launcher View...');
-  await send('Page.navigate', { url: 'http://127.0.0.1:8787' });
-  await sleep(1500);
-  await takeScreenshot('docs/screenshots/01_hero_launcher.png');
-  await takeScreenshot('docs/ui.png');
-
-  // 2. Open App Select Dropdown
-  console.log('2. Capturing App Select Dropdown...');
-  await evaluate(`document.querySelector('.app-select-trigger')?.click();`);
-  await sleep(600);
-  await takeScreenshot('docs/screenshots/02_app_select_dropdown.png');
-
-  // 3. Open Settings Modal
-  console.log('3. Capturing Settings Modal...');
-  await send('Page.navigate', { url: 'http://127.0.0.1:8787' });
-  await sleep(1000);
-  await evaluate(`
-    const btns = Array.from(document.querySelectorAll('button'));
-    const btn = btns.find(b => b.textContent.includes('系统设置') || b.title?.includes('系统配置'));
-    btn?.click();
-  `);
-  await sleep(700);
-  await takeScreenshot('docs/screenshots/03_settings_modal.png');
-
-  // 4. Investigation Session View
-  console.log('4. Capturing Investigation Session View...');
-  await send('Page.navigate', { url: 'http://127.0.0.1:8787' });
-  await sleep(1200);
-  await evaluate(`
-    const sessionBtns = Array.from(document.querySelectorAll('button.session'));
-    if (sessionBtns.length > 0) sessionBtns[0].click();
-  `);
-  await sleep(2500);
-  await takeScreenshot('docs/screenshots/04_diagnostic_session.png');
-
-  // 5. Memory View (Learnings & Candidate Rules)
-  console.log('5. Capturing Memory View (Candidate Rules)...');
-  await send('Page.navigate', { url: 'http://127.0.0.1:8787' });
-  await sleep(1000);
-  await evaluate(`
-    const btns = Array.from(document.querySelectorAll('button.nav-btn'));
-    const memBtn = btns.find(b => b.textContent.includes('知识沉淀'));
-    memBtn?.click();
-  `);
-  await sleep(1500);
-  await takeScreenshot('docs/screenshots/05_memory_knowledge_base.png');
-
-  // 6. Select a Case Document in Memory View
-  console.log('6. Capturing Memory Case Document View...');
-  await evaluate(`
-    const docCards = Array.from(document.querySelectorAll('.doc-card'));
-    if (docCards.length > 0) docCards[0].click();
-  `);
-  await sleep(1000);
-  await takeScreenshot('docs/screenshots/06_memory_investigation_doc.png');
-
-  console.log('All screenshots captured cleanly and verified!');
-  ws.close();
-  chromeProc.kill();
-}
-
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+  await send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1100, deviceScaleFactor: 1.5, mobile: false });
+  await home();
+  await evaluate(`localStorage.setItem('sparksleuth_lang','zh');localStorage.setItem('sparksleuth_inspector_width','1020');`);
+  // Set the actual language via visible control; do not fake any diagnostic content.
+  await ui(`const zh=buttons().find(b=>b.textContent.trim()==='中文');if(zh)zh.click();`);
+  await home();
+  await screenshot('01_hero_launcher');
+  await ui(`document.querySelector('.app-select-trigger').click();await until(()=>document.querySelector('.app-select-popover'));`);
+  await screenshot('02_app_select_dropdown');
+  await home();
+  await ui(`(await until(()=>buttons().find(b=>b.textContent.includes('系统设置')||b.title.includes('系统配置')))).click();await until(()=>document.querySelector('.modal-backdrop'));`);
+  await screenshot('03_settings_modal');
+  await home();
+  await ui(`(await until(()=>buttons().find(b=>b.classList.contains('session')&&b.textContent.includes('诊断图示例：自连接膨胀与 Spill')))).click();(await until(()=>buttons().find(b=>b.textContent.trim()==='诊断图'))).click();await until(()=>document.querySelectorAll('[data-graph-node]').length===35);`);
+  await ui(`const findings=document.querySelector('.graph-findings-list');if(findings)findings.open=false;const fit=buttons().find(b=>b.textContent.trim()==='适配');if(fit)fit.click();const canvas=document.querySelector('.graph-canvas');const bounds=canvas.getBoundingClientRect();if(bounds.bottom>innerHeight)canvas.scrollIntoView({block:'center'});await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));return {canvas:canvas.getBoundingClientRect().toJSON(),inspector:document.querySelector('.inspector').getBoundingClientRect().toJSON()};`).then(result=>console.log('Canvas screenshot bounds:',JSON.stringify(result)));
+  await screenshot('04_diagnostic_session');
+  await screenshot('07_diagnostic_dag');
+  await ui(`(await until(()=>buttons().find(b=>b.className.includes('graph-finding')&&b.textContent.includes('JOIN_EXPLOSION')))).click();await until(()=>document.querySelector('.graph-target')?.textContent.includes('"nodeId": 15'));const fit=buttons().find(b=>b.textContent.trim()==='适配');if(fit)fit.click();return {nodes:document.querySelectorAll('[data-graph-node]').length,edges:document.querySelectorAll('.graph-edge').length,target:document.querySelector('.graph-target').textContent};`).then((result)=>console.log('Verified real DAG:',JSON.stringify(result)));
+  await send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1700, deviceScaleFactor: 1.5, mobile: false });
+  await ui(`document.querySelector('.inspector-body').scrollTop=0;await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));if(!document.querySelector('.graph-evidence').innerText.includes('膨胀为'))throw new Error('Localized Join evidence missing');`);
+  await screenshot('08_dag_node_evidence');
+  await send('Emulation.setDeviceMetricsOverride', { width: 1760, height: 1100, deviceScaleFactor: 1.5, mobile: false });
+  await home();
+  await ui(`(await until(()=>buttons().find(b=>b.classList.contains('nav-btn')&&b.textContent.includes('知识沉淀')))).click();await until(()=>document.querySelectorAll('.doc-card').length>0&&!document.querySelector('.content-loading'));await until(()=>document.querySelector('.learnings-wrapper')||document.querySelector('.candidate-item'));`);
+  await screenshot('05_memory_knowledge_base');
+  await ui(`(await until(()=>document.querySelector('.doc-card'))).click();await until(()=>document.querySelector('.doc-report-wrapper .report-body')?.textContent.length>100&&!document.querySelector('.content-loading'));if(document.querySelector('.doc-report-wrapper .report-body').textContent.includes('翻译暂不可用'))throw new Error('Read-time translation notice must not appear in saved-source view');`);
+  await screenshot('06_memory_investigation_doc');
+  console.log('Screenshots captured from real UI; no model diagnosis or approval actions triggered.');
+} finally { ws.close(); }
