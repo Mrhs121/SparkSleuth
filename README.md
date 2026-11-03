@@ -2,7 +2,7 @@
 
 **An AI diagnostic assistant for Apache Spark.** Give it an appId, or just ask "why was this job slow?" — it walks the evidence chain on its own and comes back with a report you can act on.
 
-> Status: early development. Design is settled; implementation in progress.
+> Status: v0.1 — works end to end against a live History Server.
 
 ---
 
@@ -62,16 +62,30 @@ export SPARKSLEUTH_HS_URL=http://localhost:18080
 
 # 3. run
 pnpm install
-pnpm dev
+pnpm dev        # server on :8787, web on :5173
 ```
 
-Then open the web UI and ask about an application.
+Open http://localhost:5173 and ask about an application. For a single port, build
+the web UI first and let the server serve it:
 
-No History Server handy? `testenv/` spins one up locally with a set of deliberately broken jobs:
+```bash
+pnpm build && pnpm start   # http://localhost:8787
+```
+
+No History Server handy? `testenv/` spins one up locally with seven jobs built to
+trip — or deliberately not trip — each rule:
 
 ```bash
 ./testenv/start-hs.sh
 ./testenv/run-all.sh
+```
+
+Prefer the terminal? The CLI drives the same agent runtime:
+
+```bash
+pnpm cli apps
+pnpm cli diagnose <appId> "why is this slow?"
+pnpm cli call spark_history_stage_detail '{"appId":"...","stageId":3}'
 ```
 
 ## Documentation
@@ -79,6 +93,7 @@ No History Server handy? `testenv/` spins one up locally with a set of deliberat
 - [Design](docs/design.md) — architecture, agent runtime, rules, memory
 - [Skills](docs/skills.md) — how to add a new observation source
 - [Rules](docs/rules.md) — each rule's threshold and rationale
+- [Test environment](testenv/README.md) — a local History Server and the fixture jobs
 
 ## Roadmap
 

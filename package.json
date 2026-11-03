@@ -1,0 +1,31 @@
+{
+  "name": "sparksleuth",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An AI diagnostic assistant for Apache Spark",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @sparksleuth/server --filter @sparksleuth/web dev",
+    "dev:server": "pnpm --filter @sparksleuth/server dev",
+    "dev:web": "pnpm --filter @sparksleuth/web dev",
+    "build": "pnpm --filter @sparksleuth/web build",
+    "start": "pnpm --filter @sparksleuth/server start",
+    "typecheck": "pnpm -r typecheck",
+    "cli": "pnpm --filter @sparksleuth/cli start",
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  },
+  "packageManager": "pnpm@10.15.1",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
