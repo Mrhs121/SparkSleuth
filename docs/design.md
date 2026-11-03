@@ -86,19 +86,21 @@ sparksleuth/
 │   │   │   └── types.ts
 │   ├── skills-spark/          # 内置 Spark 能力
 │   │   ├── src/history-client.ts
-│   │   ├── src/tools/*.ts     # 数据采集工具
-│   │   ├── src/rules/*.ts     # 诊断规则
-│   │   └── src/skill.ts
-│   ├── server/                # 控制层
+│   │   ├── src/facts.ts       # 事实收集（一次性拉齐证据）
+│   │   ├── src/tools/index.ts # 数据采集工具
+│   │   ├── src/rules/index.ts # 12 条诊断规则
+│   │   ├── test/rules.test.ts # 规则单测
+│   │   └── scripts/verify-fixtures.ts
+│   ├── server/                # 控制层（Fastify + node:sqlite）
 │   │   ├── src/session/       # 生命周期、编排、事件映射
-│   │   ├── src/memory/        # 三层记忆
-│   │   ├── src/routes/
+│   │   ├── src/memory/        # 三层记忆、Auto Dream
+│   │   ├── src/index.ts       # REST + WebSocket + 静态资源
 │   │   └── src/db.ts
 │   └── cli/                   # 命令行入口（无 UI 也能用）
 ├── web/                       # React 前端
 ├── testenv/                   # 本地测试环境
-│   ├── start-hs.sh
-│   ├── jobs/*.py
+│   ├── start-hs.sh / stop-hs.sh
+│   ├── jobs/*.py              # 7 个夹具作业
 │   └── run-all.sh
 └── data/                      # 运行时数据（gitignore）
 ```
@@ -381,20 +383,25 @@ type Event =
 
 ### 13.2 问题作业（内置 7 个）
 
-| 作业 | 构造 | 期望命中 |
+每个作业只为一件事存在：证明某条规则会响，或者证明它在健康数据上不响。
+
+| 作业 | 构造 | 实测命中 |
 |---|---|---|
-| `j1_self_join_explosion` | 超级用户导致自 Join 膨胀 | JOIN_EXPLOSION、SPILL_HEAVY、STAGE_DOMINANT |
-| `j2_skew_join` | 单 key 占一半数据、关闭 AQE 倾斜处理 | TASK_SKEW |
+| `j1_self_join_explosion` | 非唯一键自 Join，320 万行膨胀到 7799 万行 | JOIN_EXPLOSION、SPILL_HEAVY |
+| `j2_skew_join` | 单 key 占一半数据，关闭 AQE | SHUFFLE_SKEW、CONF_CHECK |
 | `j3_bnlj` | 非等值 Join 条件 | BNLJ |
-| `j4_small_files` | 大量小文件后聚合 | SMALL_FILES |
-| `j5_task_failures` | UDF 概率抛错触发重试 | TASK_FAILURES |
-| `j6_healthy` | 正常作业（对照，要求零误报） | 无 P0/P1 |
-| `j7_case1_optimized` | j1 的优化版（预聚合 + Top-N） | 用于 A/B 对照 |
+| `j4_small_files` | 先写 2000 个小文件再扫 | SMALL_FILES |
+| `j5_task_failures` | 任务内概率抛错 | TASK_FAILURES |
+| `j6_healthy` | 正常作业（对照） | 无 |
+| `j7_self_join_optimized` | j1 的优化版：两侧各取 Top-3 再 Join | 无 |
+
+j1 与 j7 用同一份数据回答同一个问题，结论相反：这是规则层"不误报"的核心证据。
 
 ### 13.3 回归
 
-- 规则层：对每个作业断言命中规则集合，作为 CI 用例。
-- 端到端：对 j1 发起"这个任务很慢"，断言最终报告包含问题 Stage、膨胀倍数与改写建议。
+- **规则单测**（`packages/skills-spark/test/rules.test.ts`，13 个用例）：用手工构造的 `AppFacts` 断言每条规则的触发条件与静默条件，不依赖 History Server。`pnpm -r test` 即可跑。
+- **夹具校验**（`packages/skills-spark/scripts/verify-fixtures.ts`）：对 History Server 里每个作业跑一遍 `collectFacts + runRules`，输出命中矩阵，与 13.2 的表对照。
+- **端到端**：对 j1 发起"这个任务很慢"，断言报告覆盖问题 Stage、膨胀倍数与改写建议；对 j7 发起同样的问题，断言报告结论为"健康"。
 
 ---
 
@@ -410,7 +417,7 @@ SPARKSLEUTH_HS_URL=http://localhost:18080
 # 运行时
 SPARKSLEUTH_PORT=8787
 SPARKSLEUTH_DATA_DIR=./data
-SPARKSLEUTH_MAX_STEPS=40
+SPARKSLEUTH_MAX_STEPS=30
 SPARKSLEUTH_CONTEXT_BUDGET=120000
 SPARKSLEUTH_MAX_TOOL_RESULT_CHARS=6000
 SPARKSLEUTH_SESSION_TIMEOUT_MS=1200000
@@ -419,9 +426,12 @@ SPARKSLEUTH_CONCURRENCY=3
 # 规则阈值（可选覆盖）
 SPARKSLEUTH_RULE_SKEW_RATIO=5
 SPARKSLEUTH_RULE_SPILL_RATIO=1
+SPARKSLEUTH_RULE_GC_RATIO=0.1
+SPARKSLEUTH_RULE_FANOUT_RATIO=10
+SPARKSLEUTH_RULE_DOMINANT_RATIO=0.5
 ```
 
-全部配置项见 `docs/configuration.md`。
+完整清单见 `.env.example`。
 
 ---
 

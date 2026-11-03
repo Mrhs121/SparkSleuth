@@ -39,15 +39,15 @@ address in the same change; **P2** worth knowing, not urgent.
 
 ### `TASK_SKEW` — a few tasks do all the work
 
-- **Fires when** max task duration is more than 5× p50 and exceeds 60 s.
+- **Fires when** max task duration is more than 5× p50 and exceeds 5 s.
 - **Why it matters** the stage ends when its slowest task ends; the rest of the cluster idles.
-- **Thresholds** `durationSkewRatio > 5`, `minMaxDurationMs = 60000`
+- **Thresholds** `durationSkewRatio > 5`; `P1` above 5 s, `P0` above 60 s — a long tail under five seconds rarely changes the outcome, but it is still worth naming.
 
 ### `SHUFFLE_SKEW` — uneven shuffle read
 
-- **Fires when** max shuffle-read bytes exceed 5× p50.
+- **Fires when** max shuffle-read bytes exceed 5× p50 and the largest shard exceeds 1 MB.
 - **Why it matters** points at a hot key rather than a slow node.
-- **Threshold** `shuffleReadSkewRatio > 5`
+- **Thresholds** `shuffleReadSkewRatio > 5`; `P2` under 100 MB, `P1` above it.
 
 ### `JOIN_EXPLOSION` — row fan-out in a join
 
@@ -69,9 +69,9 @@ address in the same change; **P2** worth knowing, not urgent.
 
 ### `GC_HEAVY` — the JVM spends its time collecting
 
-- **Fires when** GC time exceeds 10% of task time.
+- **Fires when** GC time exceeds 10% of task time, at executor level or in a stage whose median task runs longer than 10 s with at least 1 s of GC.
 - **Why it matters** object churn, oversized partitions, or a heap that is too small.
-- **Threshold** `gcRatio > 0.10`
+- **Threshold** `gcRatio > 0.10`. Short stages are ignored: a few hundred milliseconds of GC inside a sub-second task is noise, and reporting it trains people to ignore the rule.
 
 ### `EXECUTOR_LOST` — executors disappearing
 
@@ -89,7 +89,7 @@ address in the same change; **P2** worth knowing, not urgent.
 
 - **Fires when** a scan reads many files with a small average size.
 - **Why it matters** per-file overhead dominates, and the problem compounds downstream.
-- **Thresholds** `fileCount > 1000`, `avgFileSize < 16 MiB`
+- **Thresholds** `fileCount > 1000`, `avgFileSize < 16 MiB`; `P1` above 5000 files.
 
 ### `CONF_CHECK` — risky configuration
 

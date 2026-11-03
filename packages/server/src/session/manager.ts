@@ -112,7 +112,9 @@ export class SessionManager {
             },
             saveReport: async (r) => {
               const path = join(this.workspace(sid), 'reports', `report-${Date.now()}.md`);
-              await writeFile(path, `# ${r.title}\n\n${r.markdown}\n`, 'utf8');
+              // The model usually opens with its own H1; do not stack two.
+              const body = r.markdown.replace(/^\s*#\s+.*\n+/, '');
+              await writeFile(path, `# ${r.title}\n\n${body}\n`, 'utf8');
               this.emit(sid, { type: 'report', path, title: r.title });
               return { path };
             },
