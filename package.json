@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "node": ">=23.4"
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @sparksleuth/server --filter @sparksleuth/web dev",

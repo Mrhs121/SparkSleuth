@@ -53,6 +53,8 @@ Twelve built-in rules cover stage dominance, heavy spill, task and shuffle skew,
 
 ## Quick start
 
+Requires Node.js 23.4+ (the control layer persists to the built-in `node:sqlite`) and pnpm 10.
+
 ```bash
 # 1. point it at a model gateway (any Anthropic-compatible endpoint)
 export SPARKSLEUTH_LLM_BASE_URL=https://api.anthropic.com

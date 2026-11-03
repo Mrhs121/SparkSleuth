@@ -17,8 +17,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          # node:sqlite is what the control layer persists to.
-          node-version: 22
+          # node:sqlite (used by the control layer) is unflagged from 23.4.
+          node-version: 24
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
