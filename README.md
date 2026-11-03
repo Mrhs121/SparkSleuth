@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" alt="SparkSleuth — Performance &amp; Diagnosis" width="420" />
+  <img src="docs/logo.png" alt="SparkSleuth — Performance &amp; Diagnosis" width="420" />
 </p>
 
 # SparkSleuth
