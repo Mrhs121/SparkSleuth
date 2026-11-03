@@ -4,6 +4,8 @@
 
 > Status: v0.1 — works end to end against a live History Server.
 
+![SparkSleuth](docs/ui.png)
+
 ---
 
 ## Why
