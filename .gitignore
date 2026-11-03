@@ -20,6 +20,6 @@ coverage/
 .DS_Store
 
 # local scraped material (not part of the project)
-截屏*.png
+*截屏*.png
 PPT内容整理.md
 设计方案.md
